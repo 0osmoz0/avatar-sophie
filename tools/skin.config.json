@@ -1,0 +1,34 @@
+{
+  "enabled": true,
+  "notes": [
+    "Calibration manuelle : echantillons preleves sur le visage/mains (skin) et sur les",
+    "zones concurrentes (pantalon camel, chaussures creme, cheveux, veste). Le classement",
+    "se fait par plus proche centroide OKLab, pas par seuil absolu.",
+    "shift : decalage relatif OKLCh — peau un peu plus chaude et doree, sans aplat."
+  ],
+  "targets": {
+    "skin": [
+      "#F3D3C0",
+      "#E8C4AE",
+      "#F7DCCB",
+      "#DDB39A",
+      "#C9967E",
+      "#F0C9B4",
+      "#E5B89F"
+    ]
+  },
+  "competitors": {
+    "pants": ["#C4A06E", "#B8925C", "#D4B07E", "#A67C4A", "#8B6340"],
+    "shoes": ["#F5F2EA", "#EDE8DC", "#D9D2C4", "#F8F6F0"],
+    "hair": ["#2A1A12", "#3D2818", "#5A3A22", "#1A100C", "#7A4A28"],
+    "jacket": ["#0A0A0A", "#1A1A1A", "#2C2C2C", "#111111"]
+  },
+  "maxDistance": 0.085,
+  "minComponentAreaRatio": 0.0008,
+  "featherRadius": 2,
+  "shift": {
+    "lightness": -0.035,
+    "chroma": 0.18,
+    "hueDegrees": 18
+  }
+}

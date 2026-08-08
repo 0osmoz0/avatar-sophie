@@ -1,0 +1,50 @@
+{
+  "frameHeight": 320,
+  "grid": [6, 6],
+  "notes": [
+    "Source de verite du pipeline. `dir` designe un dossier de asset/, jamais renomme ni deplace.",
+    "`exclude` retire les frames parasites des planches generees par IA (index 0-35, lecture par lignes).",
+    "`scale` corrige la normalisation quand la pose n'est pas debout : elle se fait sur la hauteur",
+    "mediane de la boite englobante, ce qui grandirait a tort un personnage recroqueville.",
+    "asset/angry/suprise/ est un doublon exact de asset/suprise/ et n'est donc pas reference."
+  ],
+  "animations": {
+    "idle": { "dir": "idl", "fps": 10, "loop": true, "exclude": [] },
+    "walk": { "dir": "walk", "fps": 14, "loop": true, "exclude": [] },
+    "run": { "dir": "sprint", "fps": 18, "loop": true, "exclude": [] },
+    "fall": { "dir": "fall", "fps": 14, "loop": true, "exclude": [] },
+    "hang": { "dir": "edge hand", "fps": 8, "loop": true, "exclude": [] },
+    "sleep": { "dir": "sleep", "fps": 6, "loop": true, "exclude": [] },
+    "chase": { "dir": "chase", "fps": 16, "loop": true, "exclude": [] },
+
+    "coffee": { "dir": "cofee", "fps": 10, "loop": true, "exclude": [] },
+    "work": { "dir": "work", "fps": 10, "loop": true, "exclude": [] },
+    "work_alt": { "dir": "work 2", "fps": 10, "loop": true, "exclude": [] },
+    "overwork": { "dir": "overworker", "fps": 8, "loop": true, "exclude": [] },
+    "study": { "dir": "study", "fps": 10, "loop": true, "exclude": [] },
+    "eat": { "dir": "eat", "fps": 12, "loop": true, "exclude": [] },
+    "think": { "dir": "think", "fps": 8, "loop": true, "exclude": [] },
+
+    "dance1": { "dir": "dance 1", "fps": 14, "loop": true, "exclude": [] },
+    "dance2": { "dir": "dance2", "fps": 14, "loop": true, "exclude": [] },
+    "dance3": { "dir": "dance3", "fps": 14, "loop": true, "exclude": [] },
+    "dance4": { "dir": "dance4", "fps": 14, "loop": true, "exclude": [] },
+    "dance5": { "dir": "dance5", "fps": 14, "loop": true, "exclude": [] },
+    "dance6": { "dir": "dance6", "fps": 14, "loop": true, "exclude": [] },
+
+    "happy": { "dir": "happy", "fps": 14, "loop": false, "exclude": [] },
+    "excited": { "dir": "exicted", "fps": 16, "loop": false, "exclude": [] },
+    "angry": { "dir": "angry", "fps": 12, "loop": false, "exclude": [] },
+    "crying": { "dir": "crying", "fps": 10, "loop": true, "exclude": [] },
+    "love": { "dir": "love", "fps": 12, "loop": false, "exclude": [] },
+    "surprise": { "dir": "suprise", "fps": 16, "loop": false, "exclude": [] },
+    "yawn": { "dir": "YAWN", "fps": 8, "loop": false, "exclude": [] },
+    "wave": { "dir": "wave", "fps": 12, "loop": false, "exclude": [] },
+    "blow_kiss": { "dir": "blow kiss", "fps": 12, "loop": false, "exclude": [] },
+    "look_around": { "dir": "look around", "fps": 8, "loop": false, "exclude": [] },
+
+    "push": { "dir": "push", "fps": 12, "loop": true, "exclude": [32, 33, 34, 35] },
+    "pull": { "dir": "pull", "fps": 12, "loop": true, "exclude": [] },
+    "drag": { "dir": "TakeHer", "fps": 10, "loop": true, "exclude": [] }
+  }
+}
