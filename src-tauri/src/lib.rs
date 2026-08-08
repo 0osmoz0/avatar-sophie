@@ -35,7 +35,10 @@ pub fn run() {
             if let Some(pet) = app.get_webview_window(window::PET_WINDOW_LABEL) {
                 let _ = pet.set_always_on_top(true);
                 #[cfg(target_os = "macos")]
-                macos::configure_pet_window(&pet, false);
+                {
+                    macos::configure_pet_window(&pet, false);
+                    macos::install_visibility_observers(&pet);
+                }
 
                 let _ = pet.set_ignore_cursor_events(true);
 
@@ -53,8 +56,8 @@ pub fn run() {
                     }
                 });
 
-                // Tauri / le gestionnaire d'espaces redescendent parfois le
-                // niveau : on le reapplique periodiquement.
+                // Tauri / Spaces redescendent parfois le niveau : on maintient
+                // le chrome, et on ne recadre l'overlay qu'en cas de drift.
                 #[cfg(target_os = "macos")]
                 {
                     let pet_tick = pet.clone();
@@ -64,10 +67,7 @@ pub fn run() {
                             let window = pet_tick.clone();
                             let handle = window.app_handle().clone();
                             let _ = handle.run_on_main_thread(move || {
-                                // Winit/Tauri decale parfois la fenetre hors ecran :
-                                // on recadre + reapplique le niveau.
-                                let _ = macos::fit_overlay_to_screens(&window);
-                                macos::configure_pet_window(&window, false);
+                                macos::maintain_overlay(&window);
                             });
                         }
                     });

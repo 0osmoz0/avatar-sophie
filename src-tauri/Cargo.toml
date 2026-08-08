@@ -26,14 +26,25 @@ serde_json = "1"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     "NSWindow",
+    "NSPanel",
     "NSResponder",
     "NSView",
     "NSApplication",
     "NSColor",
     "NSGraphics",
     "NSScreen",
+    "NSWorkspace",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry", "NSArray", "NSValue"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSGeometry",
+    "NSArray",
+    "NSValue",
+    "NSNotification",
+    "NSOperation",
+    "block2",
+] }
+block2 = "0.6"
 core-foundation = "0.10"
 core-graphics = "0.24"
 

@@ -64,8 +64,17 @@ npm run desktop:install
 Cela construit `Sophie.app`, la copie dans `/Applications`, et crée un LaunchAgent
 qui la relance au démarrage macOS et si elle se ferme (`KeepAlive`).
 
-Sophie flotte **au-dessus de toutes les fenêtres** (Safari, Cursor, Finder…),
-pas seulement dans le navigateur. Icône dans la barre de menus pour la contrôler.
+Sophie flotte **au-dessus des fenêtres ordinaires et maximisées** (Safari, Cursor,
+Finder, Discord en fenêtre…). Sur macOS elle utilise `CanJoinAllSpaces` +
+`FullScreenAuxiliary` pour rester visible aussi sur les **Spaces de plein écran
+système** (Discord / Safari / VS Code en vrai plein écran).
+
+Elle **ne suit pas** la fenêtre active : sa position reste dans l’espace bureau.
+
+Limitation OS : certains jeux en plein écran exclusif (shielding) peuvent masquer
+tout overlay auxiliaire — aucune API publique ne le contourne proprement.
+
+Icône dans la barre de menus pour la contrôler.
 
 Pour désactiver :
 ```bash
