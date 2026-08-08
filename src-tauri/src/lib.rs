@@ -3,6 +3,7 @@ mod desktop;
 #[cfg(target_os = "macos")]
 mod macos;
 mod tray;
+mod user_activity;
 mod window;
 
 use tauri::Manager;
@@ -22,6 +23,7 @@ pub fn run() {
             desktop::list_windows,
             desktop::accessibility_status,
             desktop::open_accessibility_settings,
+            user_activity::get_user_activity,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -74,7 +76,8 @@ pub fn run() {
                 }
             }
 
-            app.manage(cursor::spawn_tracker(handle));
+            app.manage(cursor::spawn_tracker(handle.clone()));
+            user_activity::install_observers(&handle);
             tray::install_tray(app.handle())?;
 
             Ok(())
