@@ -182,16 +182,9 @@ export class CursorNoticeState implements PetState {
   exit(): void {}
 
   update(ctx: StateContext): StateResult {
+    // Pas d'auto-escalade vers CURSOR_CHASE : seul le BehaviorBrain choisit notice vs chase.
     ctx.body.faceToward(ctx.cursor.x);
     const dist = ctx.cursor.distanceTo(ctx.body.x, ctx.body.y - 80);
-    if (dist < 250 && ctx.cursor.moving) {
-      return {
-        animation: "surprise",
-        followsBody: false,
-        motion: idleMotion(),
-        transition: "CURSOR_CHASE",
-      };
-    }
     if (ctx.elapsed > 2.5 || dist > 450) {
       return activityResult("surprise", 0, ctx.elapsed);
     }

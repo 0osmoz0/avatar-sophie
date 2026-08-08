@@ -1,3 +1,7 @@
+/**
+ * LEGACY — non branché.
+ * Remplacé par `src/behavior/considerations/catalog.ts`.
+ */
 import type { StateId } from "../state/types";
 import type { Needs } from "./Needs";
 

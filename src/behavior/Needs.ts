@@ -1,6 +1,17 @@
 /**
  * Jauges / drivers de personnalité.
+ *
+ * Évolution progressive ; `mood` est dérivé, pas une 6e jauge brute.
  */
+
+export type NeedsDeltas = Partial<{
+  energy: number;
+  fatigue: number;
+  boredom: number;
+  affection: number;
+  curiosity: number;
+  social: number;
+}>;
 
 export class Needs {
   energy = 80;
@@ -12,54 +23,84 @@ export class Needs {
 
   update(dt: number, active: string): void {
     if (active === "IDLE" || active === "LOOK_AROUND" || active === "THINK") {
-      this.energy = clamp(this.energy + 1.5 * dt, 0, 100);
-      this.boredom = clamp(this.boredom + 4 * dt, 0, 100);
-      this.fatigue = clamp(this.fatigue - 0.8 * dt, 0, 100);
-      this.curiosity = clamp(this.curiosity + 1.2 * dt, 0, 100);
+      this.energy = clamp(this.energy + 1.2 * dt, 0, 100);
+      this.boredom = clamp(this.boredom + 2.4 * dt, 0, 100);
+      this.fatigue = clamp(this.fatigue - 0.6 * dt, 0, 100);
+      this.curiosity = clamp(this.curiosity + 0.9 * dt, 0, 100);
     }
 
     if (active === "SLEEP") {
-      this.energy = clamp(this.energy + 14 * dt, 0, 100);
-      this.fatigue = clamp(this.fatigue - 20 * dt, 0, 100);
-      this.boredom = clamp(this.boredom - 2 * dt, 0, 100);
+      this.energy = clamp(this.energy + 10 * dt, 0, 100);
+      this.fatigue = clamp(this.fatigue - 14 * dt, 0, 100);
+      this.boredom = clamp(this.boredom - 1.5 * dt, 0, 100);
     }
 
     if (active === "WORK" || active === "STUDY" || active === "OVERWORK") {
-      this.energy = clamp(this.energy - 4 * dt, 0, 100);
-      this.fatigue = clamp(this.fatigue + 6 * dt, 0, 100);
-      this.boredom = clamp(this.boredom - 3 * dt, 0, 100);
-      this.curiosity = clamp(this.curiosity - 1 * dt, 0, 100);
+      this.energy = clamp(this.energy - 2.8 * dt, 0, 100);
+      this.fatigue = clamp(this.fatigue + 4.2 * dt, 0, 100);
+      this.boredom = clamp(this.boredom - 2.2 * dt, 0, 100);
+      this.curiosity = clamp(this.curiosity - 0.7 * dt, 0, 100);
     }
 
     if (active === "WALK" || active === "RUN") {
-      this.boredom = clamp(this.boredom - 5 * dt, 0, 100);
-      this.curiosity = clamp(this.curiosity + 2 * dt, 0, 100);
-      this.energy = clamp(this.energy - 1.5 * dt, 0, 100);
+      this.boredom = clamp(this.boredom - 3.5 * dt, 0, 100);
+      this.curiosity = clamp(this.curiosity + 1.5 * dt, 0, 100);
+      this.energy = clamp(this.energy - 1.1 * dt, 0, 100);
     }
 
     if (active === "DANCE" || active === "CURSOR_CHASE") {
-      this.energy = clamp(this.energy - 5 * dt, 0, 100);
-      this.boredom = clamp(this.boredom - 10 * dt, 0, 100);
-      this.social = clamp(this.social + 3 * dt, 0, 100);
+      this.energy = clamp(this.energy - 3.5 * dt, 0, 100);
+      this.boredom = clamp(this.boredom - 7 * dt, 0, 100);
+      this.social = clamp(this.social + 2.2 * dt, 0, 100);
     }
 
     if (active === "COFFEE") {
-      this.energy = clamp(this.energy + 10 * dt, 0, 100);
-      this.fatigue = clamp(this.fatigue - 5 * dt, 0, 100);
+      this.energy = clamp(this.energy + 7 * dt, 0, 100);
+      this.fatigue = clamp(this.fatigue - 3.5 * dt, 0, 100);
+    }
+
+    if (active === "YAWN") {
+      this.fatigue = clamp(this.fatigue + 0.4 * dt, 0, 100);
     }
 
     if (active === "HANG" || active === "PUSH" || active === "PULL") {
-      this.curiosity = clamp(this.curiosity - 4 * dt, 0, 100);
-      this.boredom = clamp(this.boredom - 6 * dt, 0, 100);
+      this.curiosity = clamp(this.curiosity - 2.8 * dt, 0, 100);
+      this.boredom = clamp(this.boredom - 4.5 * dt, 0, 100);
     }
 
     if (active === "PET" || active === "HAPPY" || active === "LOVE" || active === "WAVE") {
-      this.affection = clamp(this.affection + 12 * dt, 0, 100);
-      this.social = clamp(this.social + 8 * dt, 0, 100);
+      this.affection = clamp(this.affection + 9 * dt, 0, 100);
+      this.social = clamp(this.social + 6 * dt, 0, 100);
     }
 
     // Dérive lente hors interaction sociale.
-    this.social = clamp(this.social - 0.4 * dt, 0, 100);
+    this.social = clamp(this.social - 0.3 * dt, 0, 100);
+  }
+
+  /** Applique des deltas bornés (conséquences post-goal). */
+  apply(deltas: NeedsDeltas): void {
+    if (deltas.energy !== undefined) this.energy = clamp(this.energy + deltas.energy, 0, 100);
+    if (deltas.fatigue !== undefined) this.fatigue = clamp(this.fatigue + deltas.fatigue, 0, 100);
+    if (deltas.boredom !== undefined) this.boredom = clamp(this.boredom + deltas.boredom, 0, 100);
+    if (deltas.affection !== undefined) {
+      this.affection = clamp(this.affection + deltas.affection, 0, 100);
+    }
+    if (deltas.curiosity !== undefined) {
+      this.curiosity = clamp(this.curiosity + deltas.curiosity, 0, 100);
+    }
+    if (deltas.social !== undefined) this.social = clamp(this.social + deltas.social, 0, 100);
+  }
+
+  snapshot(): Record<string, number | string> {
+    return {
+      e: Math.round(this.energy),
+      f: Math.round(this.fatigue),
+      b: Math.round(this.boredom),
+      c: Math.round(this.curiosity),
+      s: Math.round(this.social),
+      a: Math.round(this.affection),
+      mood: this.mood,
+    };
   }
 
   get tired(): boolean {

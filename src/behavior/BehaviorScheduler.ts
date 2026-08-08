@@ -4,6 +4,11 @@ import type { StateId } from "../state/types";
 import type { StateMachine } from "../state/StateMachine";
 
 /**
+ * LEGACY — non branché.
+ *
+ * Remplacé par `BehaviorBrain` + considerations (utilité / Needs / Memory).
+ * Conservé uniquement comme référence ; ne plus importer depuis `main.ts`.
+ *
  * Ordonnanceur de vie autonome.
  *
  * N'agit que depuis IDLE, après une période d'attente aléatoire, et seulement
