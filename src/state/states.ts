@@ -90,11 +90,9 @@ export class FallState implements PetState {
 export class HangState implements PetState {
   readonly id = "HANG" as const;
   readonly priority = PRIORITY.HANG;
-  #duration = 8;
 
   enter(): void {
-    // La position d'ancrage est posée par le BehaviorBrain avant la transition.
-    this.#duration = 5 + Math.random() * 7;
+    // Position d'ancrage posée par le BehaviorBrain.
   }
 
   exit(ctx: StateContext): void {
@@ -102,12 +100,11 @@ export class HangState implements PetState {
   }
 
   update(ctx: StateContext): StateResult {
+    // Le cerveau pilote la fin de HANG (repartir / tomber) — pas de FALL forcé ici.
     return {
       animation: "hang",
       followsBody: false,
       motion: { kind: "held", x: ctx.body.x, y: ctx.body.y },
-      // Le cerveau pilote la fin ; on ne force plus FALL ici.
-      transition: ctx.elapsed >= this.#duration ? "FALL" : undefined,
     };
   }
 }
@@ -137,20 +134,32 @@ export class ActivityState implements PetState {
   ) {}
 
   #duration = 6;
+  #clip: Parameters<typeof activityResult>[0] = "work";
+  static #lastWorkClip: "work" | "work_alt" | null = null;
 
   enter(): void {
     this.#duration = this.minDuration + Math.random() * (this.maxDuration - this.minDuration);
+    if (this.id === "WORK") {
+      const options = (["work", "work_alt"] as const).filter(
+        (c) => c !== ActivityState.#lastWorkClip,
+      );
+      const pick = options[Math.floor(Math.random() * options.length)] ?? "work";
+      this.#clip = pick;
+      ActivityState.#lastWorkClip = pick;
+    } else {
+      this.#clip = this.animation;
+    }
   }
   exit(): void {}
 
   update(ctx: StateContext): StateResult {
     if (this.id === "WORK" && ctx.needs.exhausted) {
-      return activityResult(this.animation, 0, ctx.elapsed, "OVERWORK");
+      return activityResult(this.#clip, 0, ctx.elapsed, "OVERWORK");
     }
     if (this.id === "OVERWORK") {
       return activityResult(this.animation, this.#duration, ctx.elapsed, "YAWN");
     }
-    return activityResult(this.animation, this.#duration, ctx.elapsed);
+    return activityResult(this.#clip, this.#duration, ctx.elapsed);
   }
 }
 
@@ -159,10 +168,14 @@ export class DanceState implements PetState {
   readonly priority = PRIORITY.DANCE;
   #clip: "dance1" | "dance2" | "dance3" | "dance4" | "dance5" | "dance6" = "dance1";
   #duration = 8;
+  static #lastClip: string | null = null;
 
   enter(): void {
     const clips = ["dance1", "dance2", "dance3", "dance4", "dance5", "dance6"] as const;
-    this.#clip = clips[Math.floor(Math.random() * clips.length)]!;
+    const pool = clips.filter((c) => c !== DanceState.#lastClip);
+    const pick = pool[Math.floor(Math.random() * pool.length)] ?? clips[0]!;
+    this.#clip = pick;
+    DanceState.#lastClip = pick;
     this.#duration = 6 + Math.random() * 8;
   }
   exit(): void {}

@@ -6,7 +6,7 @@
  */
 
 import type { Goal } from "./Goal";
-import { goalLabel } from "./Goal";
+import { goalLabel, goToTimeoutSec } from "./Goal";
 import { Memory } from "./Memory";
 import type { Needs } from "./Needs";
 import type { Body } from "../motion/Body";
@@ -19,6 +19,10 @@ import type { BrainContext, Consideration } from "./considerations/types";
 import { WALK_SPEED, RUN_SPEED, type MotionIntent } from "../motion/Locomotion";
 import { EventBus } from "../core/EventBus";
 import { BrainDebug } from "./BrainDebug";
+import {
+  emptyUserActivitySnapshot,
+  type UserActivitySnapshot,
+} from "../user/UserActivitySnapshot";
 
 export type BrainEvents = {
   goalFinished: { label: string; failed?: boolean };
@@ -27,6 +31,7 @@ export type BrainEvents = {
   landed: { at: number };
   userInteract: { kind: string };
   cursorNearby: { dist: number };
+  userActivityChanged: { kind: string };
   decide: {
     pick: string;
     utility: number;
@@ -69,6 +74,10 @@ export class BehaviorBrain {
   #activityArmed = false;
   #wakeRequested = false;
   #lastCtx: BrainContext | null = null;
+  /** Y au sol avant perch — pour redescendre sans chute. */
+  #prePerchY = 0;
+  /** Label consideration pour logs d'abandon de chaîne. */
+  #chainRoot = "";
 
   constructor(machine: StateMachine, needs: Needs, considerations = ALL_CONSIDERATIONS) {
     this.#machine = machine;
@@ -113,6 +122,7 @@ export class BehaviorBrain {
     body: Body,
     cursor: CursorTracker,
     world: WorldSnapshot,
+    userActivity: UserActivitySnapshot = emptyUserActivitySnapshot(),
   ): BrainFrameResult {
     const stateId = this.#machine.currentId;
 
@@ -126,10 +136,15 @@ export class BehaviorBrain {
       needs: this.#needs,
       memory: this.memory,
       world,
+      userActivity,
       stateId,
       idleSeconds: this.#idleSince,
       hour: new Date().getHours(),
     };
+
+    if (BrainDebug.enabled()) {
+      BrainDebug.userActivity(userActivity);
+    }
 
     if (stateId === "DRAG") {
       this.clearGoal("drag");
@@ -156,13 +171,22 @@ export class BehaviorBrain {
         BrainDebug.status(
           `idle decide@${Math.max(0, (this.#nextDecideAt - now) / 1000).toFixed(1)}s\n` +
             `e${Math.round(this.#needs.energy)} f${Math.round(this.#needs.fatigue)} ` +
-            `b${Math.round(this.#needs.boredom)} c${Math.round(this.#needs.curiosity)}`,
+            `b${Math.round(this.#needs.boredom)} c${Math.round(this.#needs.curiosity)}\n` +
+            `${userActivity.category}/${userActivity.overallLevel}` +
+            (userActivity.userBusy ? " busy" : userActivity.userIdle ? " idleUser" : ""),
         );
       }
       return { motion: { kind: "idle" } };
     }
 
     return this.#executeGoal(now, body, cursor, stateId);
+  }
+
+  /** Wake soft suite à un changement de contexte user — jamais de goal auto. */
+  notifyUserActivity(kind: string): void {
+    this.events.emit("userActivityChanged", { kind });
+    // Wake pour re-scorer ; pas d'animation forcée.
+    this.requestWake(`userActivity:${kind}`);
   }
 
   #canDecide(stateId: StateId): boolean {
@@ -217,17 +241,20 @@ export class BehaviorBrain {
       reason: pick.reason,
     });
 
-    this.#setGoal(goal, ctx.now, pick.c.cooldownMs ?? 30_000);
+    this.#setGoal(goal, ctx.now, pick.c.cooldownMs ?? 30_000, pick.c.id);
   }
 
-  #setGoal(goal: Goal, now: number, cooldownMs = 30_000): void {
+  #setGoal(goal: Goal, now: number, cooldownMs = 30_000, memoryId?: string): void {
     this.#goal = goal;
     this.#goalStartedAt = now;
     this.#activityArmed = false;
-    const id = goalLabel(goal);
+    const id = memoryId ?? goalLabel(goal);
+    this.#chainRoot = memoryId ?? goalLabel(goal);
+    // Memory alignée sur l'id de considération (perch / window / walk…).
     this.memory.remember(id, now, cooldownMs);
-    // Backoff soft : on ne force pas une nouvelle décision immédiatement.
-    const longAct = ["sleep", "work", "study", "dance", "perch"].some((k) => id.includes(k));
+    const longAct = ["sleep", "work", "study", "dance", "perch", "window"].some((k) =>
+      id.includes(k),
+    );
     this.#nextDecideAt = now + (longAct ? 14_000 : 8_000) + Math.random() * 12_000;
     BrainDebug.log(`setGoal ${id}`);
   }
@@ -250,9 +277,19 @@ export class BehaviorBrain {
       }
       case "goTo": {
         const targetX = goal.x;
-        const arrived = Math.abs(body.x - targetX) < 10 && body.speed < 5;
+        const dist = Math.abs(body.x - targetX);
+        const budget =
+          goal.timeoutSec ??
+          goToTimeoutSec(Math.max(dist, Math.abs(body.x - targetX)), WALK_SPEED);
+
+        if (this.#lastCtx && goal.invalidate?.(this.#lastCtx)) {
+          return this.#failGoTo("destinationInvalid", dist);
+        }
+
+        const arrived = dist < 10 && body.speed < 5;
         if (arrived) return this.#finish({ next: goal.then });
-        if (elapsed > 18) return this.#finish({ failed: true });
+        if (elapsed > budget) return this.#failGoTo("goToTimeout", dist);
+
         if (stateId !== "WALK" && stateId !== "RUN") {
           return {
             motion: { kind: "moveTo", x: targetX, speed: WALK_SPEED },
@@ -284,6 +321,7 @@ export class BehaviorBrain {
       }
       case "perch": {
         if (stateId !== "HANG") {
+          this.#prePerchY = body.y;
           body.x = goal.anchor.x;
           body.y = goal.anchor.y;
           body.facing = goal.anchor.facing;
@@ -298,12 +336,8 @@ export class BehaviorBrain {
         }
         const duration = goal.duration ?? 6;
         if (elapsed >= duration) {
-          const next =
-            goal.then ??
-            ({
-              kind: "fall",
-              label: "perch-fall",
-            } satisfies Goal);
+          const next = this.#chooseAfterPerch();
+          if (!next) this.#dismountFromPerch(body);
           return this.#finish({ next });
         }
         return { motion: { kind: "held", x: body.x, y: body.y } };
@@ -312,7 +346,6 @@ export class BehaviorBrain {
         if (stateId !== "FALL") {
           return { motion: { kind: "freefall" }, requestState: "FALL", forceState: true };
         }
-        // L'atterrissage passe par notifyLanded (recover) — pas de then forcé.
         if (body.grounded && elapsed > 0.1) return this.#finish({ next: goal.then });
         return { motion: { kind: "freefall" } };
       }
@@ -344,7 +377,46 @@ export class BehaviorBrain {
     }
   }
 
-  #finish(opts?: { next?: Goal; failed?: boolean }): BrainFrameResult {
+  /** Après HANG : chute contextuelle (pas systématique), sinon redescendre. */
+  #chooseAfterPerch(): Goal | undefined {
+    const ctx = this.#lastCtx;
+    if (!ctx || ctx.stateId === "DRAG") return undefined;
+    const fallChance =
+      0.2 + (ctx.needs.boredom / 100) * 0.18 + (ctx.needs.curiosity / 100) * 0.12;
+    if (Math.random() < fallChance) {
+      return {
+        kind: "fall",
+        label: "perch-fall",
+        gate: (c) => c.stateId === "HANG" || c.stateId === "FALL",
+      };
+    }
+    return undefined;
+  }
+
+  #dismountFromPerch(body: Body): void {
+    body.grounded = true;
+    body.vy = 0;
+    body.vx = 0;
+    if (this.#prePerchY > 0) body.y = this.#prePerchY;
+  }
+
+  #failGoTo(reason: string, distance: number): BrainFrameResult {
+    const root = this.#chainRoot || goalLabel(this.#goal!);
+    BrainDebug.log(
+      `chainAbandoned=${root} reason=${reason} distance=${distance.toFixed(0)}`,
+    );
+    this.events.emit("chainAbandoned", {
+      from: root,
+      next: goalLabel(this.#goal!),
+      reason: `${reason} distance=${Math.round(distance)}`,
+    });
+    this.#goal = null;
+    this.#activityArmed = false;
+    this.#scheduleBackoff(root);
+    return this.#idleResult();
+  }
+
+  #finish(opts?: { next?: Goal; failed?: boolean; reason?: string }): BrainFrameResult {
     const current = this.#goal;
     const label = current ? goalLabel(current) : "none";
     const failed = opts?.failed === true;
@@ -355,7 +427,8 @@ export class BehaviorBrain {
     }
 
     if (failed) {
-      BrainDebug.log(`finish ${label} FAILED — abandon chain`);
+      const reason = opts?.reason ?? "failed";
+      BrainDebug.log(`finish ${label} FAILED reason=${reason}`);
       this.events.emit("goalFailed", { label });
       this.#goal = null;
       this.#activityArmed = false;
@@ -371,7 +444,7 @@ export class BehaviorBrain {
       if (!ctx || (next.gate && !next.gate(ctx))) {
         const reason = !ctx ? "no-context" : "gate-failed";
         BrainDebug.log(
-          `chainAbandoned from=${label} next=${goalLabel(next)} reason=${reason}`,
+          `chainAbandoned=${this.#chainRoot || label} from=${label} next=${goalLabel(next)} reason=${reason}`,
         );
         this.events.emit("chainAbandoned", {
           from: label,
@@ -380,14 +453,13 @@ export class BehaviorBrain {
         });
         this.#goal = null;
         this.#activityArmed = false;
-        // Préférer idle plutôt que forcer la suite.
         this.#nextDecideAt = (ctx?.now ?? performance.now()) + 5000 + Math.random() * 6000;
         return this.#idleResult();
       }
-      // Suite contextuelle OK — cooldown léger seulement (anti-spam d'étape).
       this.#goal = next;
       this.#goalStartedAt = performance.now();
       this.#activityArmed = false;
+      // Étape suivante : cooldown léger seulement (la racine a déjà le vrai CD).
       this.memory.remember(goalLabel(next), this.#goalStartedAt, 8_000);
       return { motion: { kind: "idle" } };
     }

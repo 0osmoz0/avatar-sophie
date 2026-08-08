@@ -26,6 +26,7 @@ import {
 import { CanvasRenderer } from "./render/CanvasRenderer";
 import { StateMachine } from "./state/StateMachine";
 import { createAllStates, IdleState } from "./state/states";
+import { UserActivityModel } from "./user/UserActivityModel";
 import { WorldModel } from "./world/WorldModel";
 
 const PET_HEIGHT = 150;
@@ -78,6 +79,16 @@ async function bootstrap(): Promise<void> {
   const idle = states.find((s) => s.id === "IDLE") ?? new IdleState();
   const machine = new StateMachine(idle, states);
   const brain = new BehaviorBrain(machine, needs);
+  const userActivity = new UserActivityModel();
+  await userActivity.start();
+
+  // Debug cerveau : localStorage.sophieDebugBrain = "1" ou Sophie.debugBrain = true
+  window.Sophie = {
+    ...window.Sophie,
+    debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
+    lastDecision: null,
+    lastUserActivity: null,
+  };
 
   const renderer = new CanvasRenderer(canvas);
   const player = new AnimationPlayer(registry);
@@ -142,7 +153,13 @@ async function bootstrap(): Promise<void> {
         scaleFactor: snap.scaleFactor,
       });
 
-      const decision = brain.update(now, dt, body, cursor, snap);
+      const activity = userActivity.update(now, cursor);
+      for (const signal of userActivity.drainSignals()) {
+        // Wake soft uniquement — jamais de goal spatial vers l'app active.
+        brain.notifyUserActivity(signal);
+      }
+
+      const decision = brain.update(now, dt, body, cursor, snap, activity);
       if (decision.requestState) {
         machine.request(decision.requestState, decision.forceState ?? false);
       }

@@ -57,7 +57,8 @@ export interface CursorPoint {
   y: number;
 }
 
-export const isTauri = "__TAURI_INTERNALS__" in window;
+export const isTauri =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export async function fitToWorkArea(): Promise<WorkArea> {
   if (!isTauri) {

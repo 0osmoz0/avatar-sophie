@@ -11,7 +11,7 @@ import {
   onUserSpaceChanged,
   type NativeUserActivity,
 } from "../platform/tauri";
-import { categorizeApp, isFocusCategory, type AppCategory } from "./AppCategories";
+import { categorizeApp, isFocusCategory } from "./AppCategories";
 import {
   activityLevel,
   emptyUserActivitySnapshot,
@@ -211,17 +211,4 @@ export class UserActivityModel {
     this.#recent.unshift(entry);
     if (this.#recent.length > MAX_RECENT) this.#recent.length = MAX_RECENT;
   }
-}
-
-/** Helpers de test pour fabriquer un snapshot. */
-export function makeTestSnapshot(
-  partial: Partial<UserActivitySnapshot> & { category?: AppCategory },
-): UserActivitySnapshot {
-  return {
-    ...emptyUserActivitySnapshot(),
-    ...partial,
-    keyboardLevel: partial.keyboardLevel ?? activityLevel(partial.keyboardActivity ?? 0),
-    pointerLevel: partial.pointerLevel ?? activityLevel(partial.pointerActivity ?? 0),
-    overallLevel: partial.overallLevel ?? activityLevel(partial.overallActivity ?? 0),
-  };
 }

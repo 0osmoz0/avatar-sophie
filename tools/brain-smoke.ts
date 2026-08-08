@@ -19,6 +19,7 @@ import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
 import type { Goal } from "../src/behavior/Goal";
+import { emptyUserActivitySnapshot } from "../src/user/UserActivitySnapshot";
 
 function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContext {
   const memory = partial.memory ?? new Memory();
@@ -55,6 +56,7 @@ function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContex
     needs: partial.needs,
     memory,
     world,
+    userActivity: partial.userActivity ?? emptyUserActivitySnapshot(),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 12,
     hour: partial.hour ?? 14,

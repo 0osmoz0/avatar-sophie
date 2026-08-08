@@ -4,6 +4,8 @@
  * Activer via `localStorage.sophieDebugBrain = "1"` ou `Sophie.debugBrain = true`.
  */
 
+import type { UserActivitySnapshot } from "../user/UserActivitySnapshot";
+
 export interface DecisionLog {
   pick: string;
   utility: number;
@@ -19,6 +21,7 @@ declare global {
     Sophie?: {
       debugBrain?: boolean;
       lastDecision?: DecisionLog | null;
+      lastUserActivity?: UserActivitySnapshot | null;
     };
   }
 }
@@ -36,6 +39,7 @@ function flagEnabled(): boolean {
 }
 
 let overlayEl: HTMLDivElement | null = null;
+let lastUserLine = "";
 
 function ensureOverlay(): HTMLDivElement | null {
   if (typeof document === "undefined") return null;
@@ -53,12 +57,17 @@ function ensureOverlay(): HTMLDivElement | null {
     "background:rgba(12,18,14,0.72)",
     "padding:8px 10px",
     "border-radius:6px",
-    "max-width:340px",
+    "max-width:360px",
     "white-space:pre-wrap",
   ].join(";");
   document.body.appendChild(el);
   overlayEl = el;
   return el;
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`;
+  return `${Math.round(sec / 60)}m`;
 }
 
 export const BrainDebug = {
@@ -70,6 +79,24 @@ export const BrainDebug = {
     if (!flagEnabled()) return;
     if (extra !== undefined) console.log(`[Brain] ${message}`, extra);
     else console.log(`[Brain] ${message}`);
+  },
+
+  userActivity(snap: UserActivitySnapshot): void {
+    if (typeof window !== "undefined") {
+      window.Sophie = {
+        ...window.Sophie,
+        lastUserActivity: snap,
+        debugBrain: window.Sophie?.debugBrain,
+      };
+    }
+    const line =
+      `[UserActivity] app=${snap.activeApp ?? "none"} category=${snap.category} ` +
+      `duration=${formatDuration(snap.activeAppDurationSec)} ` +
+      `keyboard=${snap.keyboardLevel} pointer=${snap.pointerLevel} overall=${snap.overallLevel}`;
+    if (line !== lastUserLine && flagEnabled()) {
+      lastUserLine = line;
+      console.log(line);
+    }
   },
 
   decision(log: DecisionLog): void {
@@ -90,6 +117,7 @@ export const BrainDebug = {
     const el = ensureOverlay();
     if (el) {
       el.textContent =
+        `${lastUserLine.replace("[UserActivity] ", "")}\n` +
         `pick ${log.pick} (${log.utility.toFixed(2)})\n` +
         `${log.reason}\n` +
         `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}`;
@@ -99,6 +127,10 @@ export const BrainDebug = {
   status(line: string): void {
     if (!flagEnabled()) return;
     const el = ensureOverlay();
-    if (el) el.textContent = line;
+    if (el) {
+      el.textContent = lastUserLine
+        ? `${lastUserLine.replace("[UserActivity] ", "")}\n${line}`
+        : line;
+    }
   },
 };

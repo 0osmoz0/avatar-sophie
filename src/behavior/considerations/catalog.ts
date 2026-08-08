@@ -1,7 +1,10 @@
 import type { Consideration, BrainContext } from "./types";
 import type { Goal } from "../Goal";
+import { goToTimeoutSec } from "../Goal";
 import type { NeedsDeltas } from "../Needs";
 import type { StateId } from "../../state/types";
+import { userActivityFactor, userHint, withUserContext } from "../../user/activityModifiers";
+import { WALK_SPEED } from "../../motion/Locomotion";
 
 function pen(ctx: BrainContext, id: string): number {
   return 1 - ctx.memory.recencyPenalty(id) * 0.85;
@@ -15,6 +18,23 @@ function n01(value: number): number {
   return Math.min(1, Math.max(0, value / 100));
 }
 
+function windowHorizDist(ctx: BrainContext): number | null {
+  const w = ctx.world.nearestWindow;
+  if (!w) return null;
+  const cx = w.x + w.width / 2;
+  return Math.abs(cx - ctx.body.x);
+}
+
+
+/** Applique le contexte user après Needs/Memory (jamais de bypass cooldown). */
+function ctxScore(ctx: BrainContext, id: string, base: number): number {
+  return withUserContext(base, userActivityFactor(id, ctx));
+}
+
+function withUserReason(base: string, ctx: BrainContext): string {
+  return `${base} ${userHint(ctx)}`;
+}
+
 /** Gates de chaîne — revalidés au moment d'activer l'étape. */
 const gates = {
   stillTired: (ctx: BrainContext) => ctx.needs.tired || ctx.needs.fatigue >= 55,
@@ -22,13 +42,8 @@ const gates = {
     (ctx.needs.tired || ctx.needs.fatigue >= 50 || ctx.needs.energy <= 45) &&
     ready(ctx, "coffee"),
   windowStillNear: (ctx: BrainContext) => {
-    const w = ctx.world.nearestWindow;
-    if (!w) return false;
-    const dist = Math.hypot(
-      w.x + w.width / 2 - ctx.body.x,
-      w.y + w.height / 2 - (ctx.body.y - 80),
-    );
-    return dist < 750;
+    const dx = windowHorizDist(ctx);
+    return dx != null && dx < 520;
   },
   edgeStillNear: (ctx: BrainContext) => {
     const e = ctx.world.nearestEdge;
@@ -45,13 +60,15 @@ export const idleHere: Consideration = {
   priority: 0,
   cooldownMs: 10_000,
   reason: (ctx) =>
-    `calm pause boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s`,
+    withUserReason(
+      `calm pause boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s`,
+      ctx,
+    ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
-    // Idle un peu plus attractif quand rien ne presse — évite le spam d'anims.
     const calm = (100 - ctx.needs.boredom) / 100;
     const base = ctx.idleSeconds < 2 ? 0.35 : 0.22 + calm * 0.35;
-    return base * pen(ctx, this.id);
+    return ctxScore(ctx, this.id, base * pen(ctx, this.id));
   },
   buildGoal: () => ({
     kind: "idle",
@@ -65,23 +82,40 @@ export const walkSomewhere: Consideration = {
   priority: 1,
   cooldownMs: 14_000,
   reason: (ctx) =>
-    `boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s explore`,
+    withUserReason(
+      `boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s explore`,
+      ctx,
+    ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const restlessness = n01(ctx.needs.boredom);
     const settled = ctx.idleSeconds > 8 ? 0.35 : ctx.idleSeconds > 4 ? 0.15 : 0;
-    return (0.18 + restlessness * 0.75 + settled) * pen(ctx, this.id);
+    let base = (0.18 + restlessness * 0.75 + settled) * pen(ctx, this.id);
+    // Si une fenêtre vraiment proche (en X — Sophie marche horizontalement).
+    const dx = windowHorizDist(ctx);
+    if (
+      dx != null &&
+      dx < 450 &&
+      (ctx.needs.curiosity >= 45 || ctx.needs.boredom >= 50)
+    ) {
+      if (dx < 220) base *= 0.52;
+      else if (dx < 350) base *= 0.72;
+      else base *= 0.88;
+    }
+    return ctxScore(ctx, this.id, base);
   },
   onComplete: { boredom: -8, curiosity: 4 },
   buildGoal(ctx) {
     const floors = ctx.world.points.filter((p) => p.kind === "floor" || p.kind === "corner");
     const pick = floors[Math.floor(Math.random() * Math.max(1, floors.length))];
     const x = pick?.x ?? ctx.world.width * (0.2 + Math.random() * 0.6);
+    const dist = Math.abs(x - ctx.body.x);
     return {
       kind: "goTo",
       x,
       y: ctx.world.height,
       label: "walk",
+      timeoutSec: goToTimeoutSec(dist, WALK_SPEED),
       then: {
         kind: "idle",
         duration: 1.2 + Math.random() * 2,
@@ -96,11 +130,15 @@ export const lookAround: Consideration = {
   id: "look",
   priority: 1,
   cooldownMs: 22_000,
-  reason: (ctx) => `curiosity=${ctx.needs.curiosity.toFixed(0)} glance`,
+  reason: (ctx) =>
+    withUserReason(`curiosity=${ctx.needs.curiosity.toFixed(0)} glance`, ctx),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
-    return (0.12 + n01(ctx.needs.curiosity) * 0.45 + n01(ctx.needs.boredom) * 0.15) *
-      pen(ctx, this.id);
+    return ctxScore(
+      ctx,
+      this.id,
+      (0.12 + n01(ctx.needs.curiosity) * 0.45 + n01(ctx.needs.boredom) * 0.15) * pen(ctx, this.id),
+    );
   },
   onComplete: { curiosity: -6, boredom: -4 },
   buildGoal: () => ({ kind: "activity", state: "LOOK_AROUND", label: "look" }),
@@ -121,10 +159,11 @@ function activity(opts: {
     cooldownMs: opts.cooldownMs,
     priority: opts.priority ?? 0,
     onComplete: opts.onComplete,
-    reason: opts.reason,
+    reason: (ctx) => withUserReason(opts.reason(ctx), ctx),
     utility(ctx) {
       if (!ready(ctx, opts.id)) return 0;
-      return Math.max(0, opts.score(ctx)) * pen(ctx, opts.id);
+      const base = Math.max(0, opts.score(ctx)) * pen(ctx, opts.id);
+      return ctxScore(ctx, opts.id, base);
     },
     buildGoal(ctx) {
       const goal: Goal = {
@@ -252,12 +291,11 @@ export const sleep = activity({
   reason: (ctx) =>
     `fatigue=${ctx.needs.fatigue.toFixed(0)} energy=${ctx.needs.energy.toFixed(0)} hour=${ctx.hour}`,
   score: (ctx) => {
-    // Quasi impossible juste après un sleep.
+    // Memory / Needs prioritaires : cooldown et recentlyDid bloquent même si coding 2h.
     if (!ready(ctx, "sleep")) return 0;
     if (ctx.memory.recentlyDid("sleep", 4)) return 0;
     const night = ctx.hour >= 23 || ctx.hour < 6;
     if (!(ctx.needs.tired || ctx.needs.exhausted || night)) return 0;
-    // Faible fatigue + ennui : ne pas dormir.
     if (ctx.needs.fatigue < 40 && ctx.needs.energy > 50 && !night) return 0;
     return (
       0.45 +
@@ -282,41 +320,53 @@ export const yawn = activity({
   },
 });
 
-/**
- * WALK → perch (HANG) → fall — SURPRISE via notifyLanded.
- * Chaque étape peut être abandonnée si le bord n'a plus de sens.
- */
 export const perchEdge: Consideration = {
   id: "perch",
   priority: 2,
   cooldownMs: 260_000,
   reason: (ctx) =>
-    `curiosity=${ctx.needs.curiosity.toFixed(0)} edge=${ctx.world.nearestEdge ? "yes" : "no"}`,
+    withUserReason(
+      `curiosity=${ctx.needs.curiosity.toFixed(0)} edge=${ctx.world.nearestEdge ? "yes" : "no"}`,
+      ctx,
+    ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (!ctx.world.nearestEdge) return 0;
     if (ctx.needs.curiosity < 40) return 0;
-    return (0.08 + n01(ctx.needs.curiosity) * 0.55 + n01(ctx.needs.boredom) * 0.15) *
-      pen(ctx, this.id);
+    const edge = ctx.world.nearestEdge;
+    const dist = Math.abs(edge.x - ctx.body.x);
+    // Bords inatteignables raisonnablement : utility ↓ (évite picks morts).
+    const reach = Math.max(0, 1 - dist / 2400);
+    return ctxScore(
+      ctx,
+      this.id,
+      (0.08 + n01(ctx.needs.curiosity) * 0.55 + n01(ctx.needs.boredom) * 0.15) *
+        (0.35 + 0.65 * reach) *
+        pen(ctx, this.id),
+    );
   },
   onComplete: { curiosity: -14, boredom: -10 },
   buildGoal(ctx) {
     const anchor = ctx.world.nearestEdge!;
+    const targetX = anchor.x;
+    const dist = Math.abs(targetX - ctx.body.x);
     return {
       kind: "goTo",
-      x: anchor.x,
-      label: "perch-approach",
+      x: targetX,
+      label: "perch",
+      timeoutSec: goToTimeoutSec(dist, WALK_SPEED),
+      invalidate: (c) => {
+        const e = c.world.nearestEdge;
+        if (!e) return true;
+        return Math.abs(e.x - targetX) > 120;
+      },
       then: {
         kind: "perch",
         anchor,
         duration: 5 + Math.random() * 6,
         label: "perch",
         gate: (c) => gates.edgeStillNear(c) && gates.curiosityOk(c) && gates.notInterrupted(c),
-        then: {
-          kind: "fall",
-          label: "perch-fall",
-          gate: (c) => gates.notInterrupted(c) && c.stateId === "HANG",
-        },
+        // Pas de FALL systématique : le Brain choisit à la fin du perch.
       },
     };
   },
@@ -328,37 +378,46 @@ export const investigateWindow: Consideration = {
   cooldownMs: 100_000,
   reason: (ctx) => {
     const w = ctx.world.nearestWindow;
-    return `curiosity=${ctx.needs.curiosity.toFixed(0)} window=${w ? "near" : "none"}`;
+    return withUserReason(
+      `curiosity=${ctx.needs.curiosity.toFixed(0)} window=${w ? "near" : "none"}`,
+      ctx,
+    );
   },
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const w = ctx.world.nearestWindow;
     if (!w) return 0;
     if (ctx.needs.curiosity < 45 && ctx.needs.boredom < 50) return 0;
-    const dist = Math.hypot(
-      w.x + w.width / 2 - ctx.body.x,
-      w.y + w.height / 2 - (ctx.body.y - 80),
-    );
-    if (dist > 700) return 0;
-    return (
-      (0.12 + n01(ctx.needs.curiosity) * 0.55 + n01(ctx.needs.boredom) * 0.2) *
-      (1 - dist / 900) *
-      pen(ctx, this.id)
-    );
+    // Distance horizontale : c'est l'axe de déplacement réel.
+    const dist = windowHorizDist(ctx);
+    if (dist == null || dist > 700) return 0;
+    const proximity = Math.max(0, 1 - dist / 700);
+    const interest =
+      0.42 + n01(ctx.needs.curiosity) * 0.65 + n01(ctx.needs.boredom) * 0.45;
+    const spatial = 0.2 + 1.4 * proximity * proximity;
+    return ctxScore(ctx, this.id, interest * spatial * pen(ctx, this.id));
   },
   onComplete: { curiosity: -12, boredom: -8 },
   buildGoal(ctx) {
     const w = ctx.world.nearestWindow!;
     const side = ctx.body.x < w.x + w.width / 2 ? w.x + 24 : w.x + w.width - 24;
     const mime: StateId = Math.random() < 0.5 ? "PUSH" : "PULL";
+    const dist = Math.abs(side - ctx.body.x);
     return {
       kind: "goTo",
       x: side,
-      label: "window-approach",
+      label: "window",
+      timeoutSec: goToTimeoutSec(dist, WALK_SPEED),
+      invalidate: (c) => {
+        const nw = c.world.nearestWindow;
+        if (!nw) return true;
+        const sideNow = c.body.x < nw.x + nw.width / 2 ? nw.x + 24 : nw.x + nw.width - 24;
+        return Math.abs(sideNow - side) > 160;
+      },
       then: {
         kind: "activity",
         state: mime,
-        label: "window-mime",
+        label: "window",
         gate: (c) => gates.windowStillNear(c) && gates.curiosityOk(c) && gates.notInterrupted(c),
         then: {
           kind: "idle",
@@ -376,21 +435,25 @@ export const reactCursor: Consideration = {
   priority: 2,
   cooldownMs: 75_000,
   reason: (ctx) =>
-    `social=${ctx.needs.social.toFixed(0)} cursorDist≈${Math.round(
-      ctx.cursor.distanceTo(ctx.body.x, ctx.body.y - 80),
-    )}`,
+    withUserReason(
+      `social=${ctx.needs.social.toFixed(0)} cursorDist≈${Math.round(
+        ctx.cursor.distanceTo(ctx.body.x, ctx.body.y - 80),
+      )}`,
+      ctx,
+    ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (BUSY_FOR_CURSOR.has(ctx.stateId)) return 0;
     const headY = ctx.body.y - 80;
     const dist = ctx.cursor.distanceTo(ctx.body.x, headY);
     if (dist > 380) return 0;
-    // Souvent ignore même proche — curseur secondaire.
     if (Math.random() < 0.7) return 0;
     const social = n01(ctx.needs.social);
     const curious = n01(ctx.needs.curiosity);
-    if (!ctx.cursor.moving) return (0.04 + social * 0.08) * pen(ctx, this.id);
-    return (0.06 + curious * 0.22 + social * 0.1) * (1 - dist / 400) * pen(ctx, this.id);
+    const base = !ctx.cursor.moving
+      ? (0.04 + social * 0.08) * pen(ctx, this.id)
+      : (0.06 + curious * 0.22 + social * 0.1) * (1 - dist / 400) * pen(ctx, this.id);
+    return ctxScore(ctx, this.id, base);
   },
   buildGoal(ctx) {
     const chase = ctx.needs.curious && ctx.cursor.moving && Math.random() < 0.28;

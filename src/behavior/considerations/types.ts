@@ -5,6 +5,7 @@ import type { Body } from "../../motion/Body";
 import type { CursorTracker } from "../../input/CursorTracker";
 import type { WorldSnapshot } from "../../world/types";
 import type { StateId } from "../../state/types";
+import type { UserActivitySnapshot } from "../../user/UserActivitySnapshot";
 
 export interface BrainContext {
   now: number;
@@ -13,6 +14,7 @@ export interface BrainContext {
   needs: Needs;
   memory: Memory;
   world: WorldSnapshot;
+  userActivity: UserActivitySnapshot;
   stateId: StateId;
   idleSeconds: number;
   hour: number;

@@ -19,7 +19,15 @@ type GoalCommon = {
 };
 
 export type Goal =
-  | (GoalCommon & { kind: "goTo"; x: number; y?: number })
+  | (GoalCommon & {
+      kind: "goTo";
+      x: number;
+      y?: number;
+      /** Budget temps (s) calculé depuis la distance ; défaut géré par le Brain. */
+      timeoutSec?: number;
+      /** true → destination devenue invalide, abandonner la chaîne. */
+      invalidate?: (ctx: BrainContext) => boolean;
+    })
   | (GoalCommon & { kind: "activity"; state: StateId; duration?: number })
   | (GoalCommon & { kind: "perch"; anchor: EdgeAnchor; duration?: number })
   | (GoalCommon & { kind: "fall" })
@@ -28,4 +36,10 @@ export type Goal =
 
 export function goalLabel(goal: Goal): string {
   return goal.label ?? goal.kind;
+}
+
+/** Timeout goTo : distance / vitesse + marge, borné. */
+export function goToTimeoutSec(distancePx: number, speedPxPerSec: number): number {
+  const travel = distancePx / Math.max(1, speedPxPerSec);
+  return Math.min(90, Math.max(12, travel + 10));
 }

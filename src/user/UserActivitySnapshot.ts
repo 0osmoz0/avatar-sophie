@@ -74,3 +74,16 @@ export function formatUserActivityHint(snap: UserActivitySnapshot): string {
   const busy = snap.userBusy ? " userBusy=true" : snap.userIdle ? " userIdle=true" : "";
   return `userActivity=${snap.category}/${snap.overallLevel}${busy}`;
 }
+
+/** Helpers de test pour fabriquer un snapshot. */
+export function makeTestSnapshot(
+  partial: Partial<UserActivitySnapshot>,
+): UserActivitySnapshot {
+  return {
+    ...emptyUserActivitySnapshot(),
+    ...partial,
+    keyboardLevel: partial.keyboardLevel ?? activityLevel(partial.keyboardActivity ?? 0),
+    pointerLevel: partial.pointerLevel ?? activityLevel(partial.pointerActivity ?? 0),
+    overallLevel: partial.overallLevel ?? activityLevel(partial.overallActivity ?? 0),
+  };
+}
