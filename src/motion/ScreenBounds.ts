@@ -1,45 +1,37 @@
 /**
- * Bornes utiles de l'écran.
- *
- * Les coordonnées manipulées par le moteur sont locales à la fenêtre, qui
- * couvre la zone utile de l'écran. Barre de menus, encoche et Dock en sont déjà
- * exclus côté Rust, mais il reste à réserver une marge pour que le personnage
- * ne soit pas coupé par les bords.
+ * Bornes du desktop virtuel (overlay multi-écran).
  */
 
-import type { WorkArea } from "../platform/tauri";
+import type { WorldModel } from "../world/WorldModel";
 
-/** Marge latérale minimale entre le personnage et le bord de l'écran. */
 const EDGE_MARGIN = 24;
 
 export class ScreenBounds {
-  #workArea: WorkArea;
+  #world: WorldModel;
   #halfWidth = 0;
 
-  constructor(workArea: WorkArea) {
-    this.#workArea = workArea;
+  constructor(world: WorldModel) {
+    this.#world = world;
   }
 
-  /** Demi-largeur du personnage, pour qu'il s'arrête avant de déborder. */
   set petHalfWidth(value: number) {
     this.#halfWidth = value;
   }
 
-  update(workArea: WorkArea): void {
-    this.#workArea = workArea;
-  }
-
   get width(): number {
-    return this.#workArea.width;
+    return this.#world.width;
   }
 
   get height(): number {
-    return this.#workArea.height;
+    return this.#world.height;
   }
 
-  /** Ordonnée du sol : le bas de la zone utile. */
   get floorY(): number {
-    return this.#workArea.height;
+    return this.#world.height;
+  }
+
+  floorYAt(x: number): number {
+    return this.#world.floorYAt(x);
   }
 
   get minX(): number {
@@ -47,19 +39,17 @@ export class ScreenBounds {
   }
 
   get maxX(): number {
-    return this.#workArea.width - EDGE_MARGIN - this.#halfWidth;
+    return this.#world.width - EDGE_MARGIN - this.#halfWidth;
   }
 
   clampX(x: number): number {
     return Math.min(this.maxX, Math.max(this.minX, x));
   }
 
-  /** Vrai lorsque le personnage touche l'un des bords latéraux. */
   atEdge(x: number): boolean {
     return x <= this.minX + 1 || x >= this.maxX - 1;
   }
 
-  /** Abscisse aléatoire à l'intérieur des bornes. */
   randomX(): number {
     return this.minX + Math.random() * Math.max(1, this.maxX - this.minX);
   }

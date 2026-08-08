@@ -9,18 +9,18 @@
 #![cfg(target_os = "macos")]
 
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSColor, NSScreen, NSWindow, NSWindowCollectionBehavior};
-use objc2_foundation::MainThreadMarker;
+use objc2_foundation::{
+    MainThreadMarker, NSActivityOptions, NSProcessInfo, NSString, NSRect,
+};
 use serde::Serialize;
 use tauri::{ActivationPolicy, AppHandle, Runtime, WebviewWindow};
 
-/// Niveau `NSFloatingWindowLevel`. Assez haut pour surnager au-dessus des
-/// fenetres ordinaires, assez bas pour ne pas masquer la barre de menus.
-const FLOATING_WINDOW_LEVEL: isize = 3;
-
-/// Niveau `NSStatusWindowLevel`, utilise quand on veut passer aussi au-dessus
-/// de la barre de menus.
-const STATUS_WINDOW_LEVEL: isize = 25;
+/// `NSStatusWindowLevel` (25). Au-dessus des apps normales ; le niveau
+/// screen-saver (1000) sort parfois la fenetre de la composition bureau.
+/// `set_always_on_top` de Tauri redescend a Floating (3) : on reapplique apres.
+const PET_WINDOW_LEVEL: isize = 25;
 
 /// Zone utile d'un ecran, en points logiques, origine en haut a gauche.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -45,9 +45,9 @@ fn ns_window<R: Runtime>(window: &WebviewWindow<R>) -> Option<Retained<NSWindow>
 
 /// Applique la configuration complete de fenetre compagnon.
 ///
-/// Par defaut on utilise le niveau status : Sophie reste au-dessus de Safari,
-/// Cursor, Finder, etc. — pas seulement dans une page web.
-pub fn configure_pet_window<R: Runtime>(window: &WebviewWindow<R>, above_menu_bar: bool) {
+/// Sophie doit rester au-dessus de Safari, Cursor, Finder, et des apps en
+/// plein ecran (Discord) — pas seulement dans une page web.
+pub fn configure_pet_window<R: Runtime>(window: &WebviewWindow<R>, _above_menu_bar: bool) {
     let Some(ns_window) = ns_window(window) else {
         return;
     };
@@ -58,21 +58,13 @@ pub fn configure_pet_window<R: Runtime>(window: &WebviewWindow<R>, above_menu_ba
     ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
     ns_window.setHasShadow(false);
 
-    // Status (25) > Floating (3) : necessaire pour rester visible devant les
-    // fenetres ordinaires de toutes les applications.
-    ns_window.setLevel(if above_menu_bar {
-        STATUS_WINDOW_LEVEL
-    } else {
-        STATUS_WINDOW_LEVEL.max(FLOATING_WINDOW_LEVEL)
-    });
-
     // CanJoinAllSpaces : suit l'utilisateur sur chaque bureau virtuel.
-    // Stationary : ne part pas en vol plane pendant Mission Control.
     // FullScreenAuxiliary : reste visible par-dessus une app en plein ecran.
     // IgnoresCycle : n'apparait pas dans Cmd+Tab.
+    // Pas de Stationary : il clouait Sophie sur le Space initial (invisible
+    // dans Discord / un autre bureau).
     ns_window.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::Stationary
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
@@ -84,12 +76,100 @@ pub fn configure_pet_window<R: Runtime>(window: &WebviewWindow<R>, above_menu_ba
     // Empeche la fenetre de se faire renvoyer derriere quand une autre app
     // prend le focus.
     ns_window.setHidesOnDeactivate(false);
+
+    // always_on_top doit passer *avant* setLevel : Tauri force Floating (3).
     let _ = window.set_always_on_top(true);
+    ns_window.setLevel(PET_WINDOW_LEVEL);
+
+    clear_webview_background(window);
+}
+
+fn clear_webview_background<R: Runtime>(window: &WebviewWindow<R>) {
+    // WKWebView dessine un fond blanc par defaut meme si le NSWindow est clear.
+    // KVC exige un NSNumber pour les BOOL (Bool::NO est traite comme nil → crash).
+    let _ = window.with_webview(|webview| {
+        unsafe {
+            let view = webview.inner() as *mut AnyObject;
+            if view.is_null() {
+                return;
+            }
+            let key = NSString::from_str("drawsBackground");
+            let value = objc2_foundation::NSNumber::numberWithBool(false);
+            let _: () = objc2::msg_send![view, setValue: &*value, forKey: &*key];
+        }
+    });
+}
+
+/// Empeche App Nap d'endormir la boucle JS (sinon Sophie disparait apres idle).
+pub fn prevent_app_nap() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let info = NSProcessInfo::processInfo();
+    let reason = NSString::from_str("Sophie desktop companion");
+    let activity = info.beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
+        &reason,
+    );
+    // Doit vivre toute la duree du process.
+    std::mem::forget(activity);
 }
 
 /// Retire l'icone du Dock et empeche l'application de prendre le focus.
 pub fn set_accessory_policy<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+}
+
+/// Etend l'overlay a l'union des ecrans via AppKit (pas Tauri set_position).
+///
+/// Les coords Tauri/winit se decalent parfois hors ecran (ex. X=-3487) sur macOS
+/// avec fenetre transparente ; `NSWindow.setFrame` reste fiable.
+pub fn fit_overlay_to_screens<R: Runtime>(window: &WebviewWindow<R>) -> Option<WorkArea> {
+    let mtm = MainThreadMarker::new()?;
+    let ns_window = ns_window(window)?;
+    let screens = NSScreen::screens(mtm);
+    if screens.is_empty() {
+        return None;
+    }
+
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    let mut scale = 2.0;
+    if let Some(main) = NSScreen::mainScreen(mtm) {
+        scale = main.backingScaleFactor();
+    }
+
+    for screen in screens.iter() {
+        let f = screen.frame();
+        min_x = min_x.min(f.origin.x);
+        min_y = min_y.min(f.origin.y);
+        max_x = max_x.max(f.origin.x + f.size.width);
+        max_y = max_y.max(f.origin.y + f.size.height);
+    }
+
+    let width = max_x - min_x;
+    let height = max_y - min_y;
+    let frame = NSRect {
+        origin: objc2_foundation::NSPoint {
+            x: min_x,
+            y: min_y,
+        },
+        size: objc2_foundation::NSSize { width, height },
+    };
+    ns_window.setFrame_display(frame, true);
+
+    // Coordonnees canvas : origine haut-gauche de l'union (y=0 au sommet).
+    Some(WorkArea {
+        x: min_x,
+        y: 0.0,
+        width,
+        height,
+        scale_factor: scale,
+    })
 }
 
 /// Zone utile de l'ecran principal, barre de menus et Dock exclus, convertie en

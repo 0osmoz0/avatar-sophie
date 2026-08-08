@@ -81,13 +81,17 @@ export class Locomotion {
       body.y += body.vy * dt;
     }
 
-    const floor = this.#bounds.floorY;
+    const floor = this.#bounds.floorYAt(body.x);
     let landed = false;
     if (body.y >= floor) {
       body.y = floor;
       body.vy = 0;
       body.grounded = true;
       landed = wasAirborne;
+    }
+
+    if (body.grounded && intent.kind !== "freefall") {
+      body.y = this.#bounds.floorYAt(body.x);
     }
 
     const clamped = this.#bounds.clampX(body.x);

@@ -46,6 +46,15 @@ npm run app             # lance en développement
 
 Le curseur suivi est le **vrai** curseur système (API Tauri `cursor_position`).
 
+## Autonomie
+
+Sophie décide via un cerveau contextuel (`BehaviorBrain`) :
+observation du bureau → évaluation → but (`Goal`) → déplacement → animation.
+
+Le curseur n’est qu’un stimulus rare. Les fenêtres système sont lues via
+`CGWindowList` ; le tray propose « Autoriser l’accès aux fenêtres… » pour
+l’Accessibilité macOS (utile pour affiner le focused window plus tard).
+
 ## Lancement permanent sur le bureau
 
 ```bash

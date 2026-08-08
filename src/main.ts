@@ -1,15 +1,12 @@
 /**
- * Point d'entrée.
- *
- * Assemble les briques : le câblage vit ici, les décisions vivent dans
- * `state/` et `behavior/`.
+ * Point d'entrée — câblage observe → décider → se déplacer → animer.
  */
 
 import { AnimationPlayer } from "./anim/AnimationPlayer";
 import { AnimationRegistry } from "./anim/AnimationRegistry";
 import { selectAnimation } from "./anim/AnimationSelector";
 import { loadManifest } from "./assets/manifest";
-import { BehaviorScheduler } from "./behavior/BehaviorScheduler";
+import { BehaviorBrain } from "./behavior/BehaviorBrain";
 import { Needs } from "./behavior/Needs";
 import { GameLoop } from "./core/GameLoop";
 import { CursorTracker } from "./input/CursorTracker";
@@ -29,13 +26,9 @@ import {
 import { CanvasRenderer } from "./render/CanvasRenderer";
 import { StateMachine } from "./state/StateMachine";
 import { createAllStates, IdleState } from "./state/states";
+import { WorldModel } from "./world/WorldModel";
 
-/** Hauteur du personnage à l'écran, en pixels logiques. */
 const PET_HEIGHT = 150;
-/** Distance à laquelle Sophie remarque le curseur. */
-const NOTICE_DISTANCE = 400;
-/** Cooldown anti-harcèlement du Cursor Chase, en ms. */
-const CHASE_COOLDOWN_MS = 20_000;
 
 async function bootstrap(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>("#stage");
@@ -51,23 +44,44 @@ async function bootstrap(): Promise<void> {
   const idleEntry = manifest.animations.idle;
   const petHalfWidth = (idleEntry.frameWidth * scale) / 2;
 
-  const bounds = new ScreenBounds(workArea);
+  const world = new WorldModel(workArea);
+  await world.bootstrap();
+
+  // Recaler l'overlay si l'union a changé après le premier fetch.
+  if (
+    Math.abs(world.width - workArea.width) > 2 ||
+    Math.abs(world.height - workArea.height) > 2
+  ) {
+    await fitToWorkArea();
+  }
+
+  const bounds = new ScreenBounds(world);
   bounds.petHalfWidth = petHalfWidth;
 
-  const body = new Body(workArea.width / 2, bounds.floorY);
+  const primary =
+    world.snapshot.monitors.find((m) => m.primary) ?? world.snapshot.monitors[0];
+  const spawnX = primary
+    ? primary.workX + primary.workWidth / 2 - world.originX
+    : world.width / 2;
+  const body = new Body(spawnX, bounds.floorYAt(spawnX));
   const locomotion = new Locomotion(bounds);
-  const cursor = new CursorTracker(workArea);
+  const cursor = new CursorTracker({
+    x: world.originX,
+    y: world.originY,
+    width: world.width,
+    height: world.height,
+    scaleFactor: world.scaleFactor,
+  });
   const needs = new Needs();
 
   const states = createAllStates();
   const idle = states.find((s) => s.id === "IDLE") ?? new IdleState();
   const machine = new StateMachine(idle, states);
-  const scheduler = new BehaviorScheduler(machine, needs);
+  const brain = new BehaviorBrain(machine, needs);
 
   const renderer = new CanvasRenderer(canvas);
   const player = new AnimationPlayer(registry);
 
-  let lastChaseAt = 0;
   let clickThrough = true;
   let lastAnim = "";
   let dirtyMotion = true;
@@ -88,8 +102,9 @@ async function bootstrap(): Promise<void> {
     body,
     machine,
     holdOffsetY: PET_HEIGHT * 0.35,
-    onDraggingChange: () => {
+    onDraggingChange: (dragging) => {
       dirtyMotion = true;
+      if (dragging) brain.clearGoal();
     },
   });
 
@@ -104,7 +119,10 @@ async function bootstrap(): Promise<void> {
       hang: "HANG",
     };
     const state = map[action];
-    if (state) machine.request(state as never, true);
+    if (state) {
+      brain.clearGoal();
+      machine.request(state as never, true);
+    }
   });
   await setCursorTracking(true);
   await setClickThrough(true);
@@ -115,20 +133,56 @@ async function bootstrap(): Promise<void> {
       const now = performance.now();
       cursor.update(dt);
 
-      // Cursor notice / chase depuis les états bas priorité.
-      maybeChaseCursor(machine, body, cursor, now);
+      const snap = world.observe(body, now);
+      cursor.setWorkArea({
+        x: snap.originX,
+        y: snap.originY,
+        width: snap.width,
+        height: snap.height,
+        scaleFactor: snap.scaleFactor,
+      });
+
+      const decision = brain.update(now, dt, body, cursor, snap);
+      if (decision.requestState) {
+        machine.request(decision.requestState, decision.forceState ?? false);
+      }
 
       const result = machine.update(ctxBase(), dt);
       needs.update(dt, machine.currentId);
-      scheduler.update(now, dt);
 
-      const motion = locomotion.apply(body, result.motion, dt);
-      if (motion.landed && machine.currentId === "FALL") {
-        machine.request("IDLE", true);
+      // Le cerveau impose le déplacement (goTo / chase / perch / fall).
+      // Les activités stationnaires gardent le motion idle de l'état.
+      const stationary = [
+        "WORK",
+        "SLEEP",
+        "COFFEE",
+        "STUDY",
+        "DANCE",
+        "EAT",
+        "THINK",
+        "PUSH",
+        "PULL",
+        "LOOK_AROUND",
+        "YAWN",
+        "SURPRISE",
+        "PET",
+        "WAVE",
+        "HAPPY",
+        "OVERWORK",
+      ].includes(machine.currentId);
+
+      const intent = stationary ? result.motion : decision.motion;
+      const motion = locomotion.apply(body, intent, dt);
+
+      if (motion.landed) {
+        brain.notifyLanded();
+        if (machine.currentId === "FALL") machine.request("IDLE", true);
       }
 
+      const followsBody =
+        result.followsBody || decision.animationHint === "followBody";
       const animId = selectAnimation(
-        { requested: result.animation, followsBody: result.followsBody },
+        { requested: result.animation, followsBody },
         body,
       );
       if (animId !== lastAnim) {
@@ -139,7 +193,6 @@ async function bootstrap(): Promise<void> {
       player.update(dt);
       dirtyMotion = true;
 
-      // Hit-test + click-through.
       const frames = player.frames();
       const target = { x: body.x, y: body.y, facing: body.facing, scale };
       const over = hitTestSprite(frames, target, cursor.x, cursor.y);
@@ -161,37 +214,27 @@ async function bootstrap(): Promise<void> {
     },
   });
 
-  function maybeChaseCursor(
-    sm: StateMachine,
-    pet: Body,
-    cur: CursorTracker,
-    now: number,
-  ): void {
-    const id = sm.currentId;
-    if (id === "DRAG" || id === "FALL" || id === "CURSOR_CHASE" || id === "CURSOR_NOTICE") {
-      return;
-    }
-    if (now - lastChaseAt < CHASE_COOLDOWN_MS && id !== "IDLE") return;
-
-    const headY = pet.y - PET_HEIGHT * 0.55;
-    const dist = cur.distanceTo(pet.x, headY);
-
-    if (dist < NOTICE_DISTANCE && (id === "IDLE" || id === "WALK" || id === "LOOK_AROUND")) {
-      if (dist < 250 && cur.moving) {
-        if (sm.request("CURSOR_CHASE")) lastChaseAt = now;
-      } else if (dist < 320) {
-        sm.request("CURSOR_NOTICE");
-      }
-    }
-  }
-
-  window.addEventListener("resize", () => {
+  const syncCanvasToWindow = (): void => {
+    // Tant que la fenetre est `visible:false`, innerWidth/Height restent a la
+    // taille initiale (800x600) : Sophie etait dessinee hors du canvas.
     renderer.resize();
     dirtyMotion = true;
-  });
+  };
+
+  window.addEventListener("resize", syncCanvasToWindow);
 
   loop.start();
   await reveal();
+  // Recaler apres show : le WKWebView n'a les bonnes dimensions qu'une fois visible.
+  await fitToWorkArea();
+  syncCanvasToWindow();
+  // Second passage au prochain frame (layout async).
+  requestAnimationFrame(() => {
+    syncCanvasToWindow();
+    body.x = Math.min(Math.max(body.x, petHalfWidth), world.width - petHalfWidth);
+    body.y = bounds.floorYAt(body.x);
+    dirtyMotion = true;
+  });
 }
 
 void bootstrap().catch((error: unknown) => {

@@ -90,18 +90,11 @@ export class FallState implements PetState {
 export class HangState implements PetState {
   readonly id = "HANG" as const;
   readonly priority = PRIORITY.HANG;
-  #duration = 6;
+  #duration = 8;
 
-  enter(ctx: StateContext): void {
-    this.#duration = 5 + Math.random() * 6;
-    // Se percher en haut d'un bord latéral.
-    const left = ctx.body.x < ctx.bounds.width / 2;
-    ctx.body.x = left ? ctx.bounds.minX : ctx.bounds.maxX;
-    ctx.body.y = Math.min(ctx.bounds.floorY * 0.35, 180);
-    ctx.body.grounded = false;
-    ctx.body.vx = 0;
-    ctx.body.vy = 0;
-    ctx.body.facing = left ? 1 : -1;
+  enter(): void {
+    // La position d'ancrage est posée par le BehaviorBrain avant la transition.
+    this.#duration = 5 + Math.random() * 7;
   }
 
   exit(ctx: StateContext): void {
@@ -113,6 +106,7 @@ export class HangState implements PetState {
       animation: "hang",
       followsBody: false,
       motion: { kind: "held", x: ctx.body.x, y: ctx.body.y },
+      // Le cerveau pilote la fin ; on ne force plus FALL ici.
       transition: ctx.elapsed >= this.#duration ? "FALL" : undefined,
     };
   }

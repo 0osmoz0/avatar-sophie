@@ -27,8 +27,8 @@
   "minComponentAreaRatio": 0.0008,
   "featherRadius": 2,
   "shift": {
-    "lightness": -0.035,
-    "chroma": 0.18,
-    "hueDegrees": 18
+    "lightness": -0.02,
+    "chroma": 0.14,
+    "hueDegrees": 14
   }
 }

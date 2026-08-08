@@ -16,9 +16,19 @@ pub fn install_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let sleep = MenuItem::with_id(app, "sleep", "Dormir", true, None::<&str>)?;
     let coffee = MenuItem::with_id(app, "coffee", "Café", true, None::<&str>)?;
     let hang = MenuItem::with_id(app, "hang", "S'accrocher", true, None::<&str>)?;
+    let access = MenuItem::with_id(
+        app,
+        "accessibility",
+        "Autoriser l'accès aux fenêtres…",
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&show, &dance, &sleep, &coffee, &hang, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &dance, &sleep, &coffee, &hang, &access, &quit],
+    )?;
 
     let icon = app
         .default_window_icon()
@@ -35,6 +45,9 @@ pub fn install_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 if let Some(win) = app.get_webview_window(window::PET_WINDOW_LABEL) {
                     let _ = win.show();
                 }
+            }
+            "accessibility" => {
+                crate::desktop::open_accessibility_settings();
             }
             other => {
                 let _ = app.emit(TRAY_ACTION_EVENT, other.to_string());

@@ -35,6 +35,13 @@ if [[ ! -f build/manifest.json ]]; then
   npm run assets
 fi
 
+# Toujours reconstruire sauf SOPHIE_SKIP_BUILD=1 (sinon on réinstalle un vieux
+# bundle du cache cargo sans les derniers correctifs).
+if [[ "${SOPHIE_SKIP_BUILD:-}" != "1" ]]; then
+  echo "→ Build release…"
+  npm run app:build
+fi
+
 APP_SRC="$(find_built_app || true)"
 if [[ -z "${APP_SRC}" ]]; then
   echo "→ Build release…"
@@ -92,7 +99,12 @@ cat > "$PLIST" <<EOF
 EOF
 
 launchctl bootout "gui/$(id -u)/${PLIST_ID}" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+sleep 1
+# `bootstrap` echoue souvent si le job existe deja a moitie : on reessaie puis open.
+if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST" 2>/dev/null || true
+fi
 launchctl enable "gui/$(id -u)/${PLIST_ID}" 2>/dev/null || true
 launchctl kickstart -k "gui/$(id -u)/${PLIST_ID}" 2>/dev/null || open -a "$APP_DST"
 
