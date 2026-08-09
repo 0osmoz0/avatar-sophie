@@ -35,13 +35,29 @@ function chainBoost(ctx: BrainContext, id: string): number {
 
   const table: Record<string, Partial<Record<string, number>>> = {
     think: { work: 1.22, study: 1.18 },
-    work: { coffee: 1.12, yawn: 1.12, think: 1.1, idle: 1.08 },
+    work: { coffee: 1.12, yawn: 1.12, think: 1.12, idle: 1.08 },
     look: { perch: 1.16, window: 1.16 },
     dance: { idle: 1.12, look: 1.1, walk: 1.08 },
     eat: { idle: 1.12, walk: 1.1 },
-    yawn: { sleep: 1.15, idle: 1.08, work: 1.06 },
+    yawn: { sleep: 1.15, idle: 1.08, work: 1.06, coffee: 1.1 },
+    happy: { look: 1.14, think: 1.12, idle: 1.1, walk: 1.08 },
+    excited: { idle: 1.1, look: 1.1, dance: 1.06 },
+    coffee: { idle: 1.1, think: 1.06 },
+    sleep: { idle: 1.08 },
+    angry: { idle: 1.1, look: 1.06 },
   };
   return table[prev]?.[id] ?? 1;
+}
+
+/**
+ * Pénalité soft anti-spam émotionnel (happy→happy, …).
+ * Jamais un blocage absolu.
+ */
+function emotionRepeatPenalty(ctx: BrainContext, id: string): number {
+  const emos = new Set(["happy", "excited", "blow_kiss", "angry", "crying"]);
+  if (!emos.has(id)) return 1;
+  if (ctx.memory.recentlyDid(id, 2)) return 0.72;
+  return 1;
 }
 
 /**
@@ -69,11 +85,15 @@ function oscillationPenalty(ctx: BrainContext, id: string): number {
   return oscillating ? 0.65 : 1;
 }
 
-/** final = base × novelty × chain × oscillation × contextModifier */
+/** final = base × novelty × chain × oscillation × emotionRepeat × contextModifier */
 function ctxScore(ctx: BrainContext, id: string, base: number): number {
   if (base <= 0) return 0;
   const scored =
-    base * novelty(ctx, id) * chainBoost(ctx, id) * oscillationPenalty(ctx, id);
+    base *
+    novelty(ctx, id) *
+    chainBoost(ctx, id) *
+    oscillationPenalty(ctx, id) *
+    emotionRepeatPenalty(ctx, id);
   return withUserContext(scored, userActivityFactor(id, ctx));
 }
 
@@ -84,7 +104,11 @@ function withUserReason(base: string, ctx: BrainContext, id?: string): string {
     id && prev && chainBoost(ctx, id) > 1.01 ? ` chainBoost=${prev}→${id}` : "";
   const osc =
     id && oscillationPenalty(ctx, id) < 0.99 ? ` oscPenalty` : "";
-  return `${base}${nov}${chainBit}${osc} ${userHint(ctx)}`;
+  const pers =
+    id && ctx.memory.personalityHint(id)
+      ? ` personality=${ctx.memory.personalityHint(id)}`
+      : "";
+  return `${base}${nov}${chainBit}${osc}${pers} ${userHint(ctx)}`;
 }
 
 /** Facteur soft selon idleSeconds — pas de timer d'animation. */

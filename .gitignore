@@ -3,6 +3,7 @@ dist/
 build/
 .DS_Store
 *.log
+tools/.audit-cache/
 
 src-tauri/target/
 src-tauri/gen/

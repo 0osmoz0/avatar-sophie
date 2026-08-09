@@ -23,6 +23,14 @@ export interface DecisionLog {
   novelty?: string;
   noveltyValue?: number;
   chain?: string;
+  personality?: string | null;
+  personalitySnapshot?: {
+    playful: number;
+    social: number;
+    curiosity: number;
+    calm: number;
+    independence: number;
+  };
 }
 
 export type AnimSource = "brain" | "user" | "physics" | "chain" | "boot";
@@ -49,6 +57,7 @@ declare global {
       lastAnim?: AnimChangeLog | null;
       runtimeReport?: import("./RuntimeAudit").RuntimeReport | null;
       runtimeAudit?: typeof import("./RuntimeAudit").RuntimeAudit;
+      lastSessionExport?: import("./RuntimeAudit").SessionExport | null;
     };
   }
 }
@@ -157,11 +166,20 @@ export const BrainDebug = {
           : "";
     const novBit = log.novelty ? ` novelty=${log.novelty}` : "";
     const chainBit = log.chain ? ` chain=${log.chain}` : "";
+    const persBit = log.personality ? ` personality=${log.personality}` : "";
     const chainBoostHint = /chainBoost=/.test(log.reason)
       ? ` reason=${log.reason.match(/chainBoost=[^\s]+/)?.[0] ?? log.reason}`
       : ` reason=${log.reason}`;
+    if (log.personalitySnapshot) {
+      const p = log.personalitySnapshot;
+      console.log(
+        `[Personality]\nplayful=${p.playful.toFixed(2)} social=${p.social.toFixed(2)} ` +
+          `curiosity=${p.curiosity.toFixed(2)}\n` +
+          `calm=${p.calm.toFixed(2)} independence=${p.independence.toFixed(2)}`,
+      );
+    }
     console.log(
-      `[Brain] pick=${log.pick}${chainBoostHint}${prevBit}${novBit}${chainBit}${ctxBit}\n` +
+      `[Brain] pick=${log.pick}${chainBoostHint}${prevBit}${novBit}${chainBit}${persBit}${ctxBit}\n` +
         `util=${log.utility.toFixed(2)} Needs e=${n.e} f=${n.f} b=${n.b} c=${n.c} s=${n.s} mood=${n.mood}\n` +
         `top: ${top} | state=${log.stateId} idle=${log.idleSeconds.toFixed(1)}s`,
     );
@@ -174,12 +192,17 @@ export const BrainDebug = {
         mem && now != null
           ? `pos=${mem.recentPositiveInteraction.toFixed(2)} fr=${mem.recentFrustration.toFixed(2)}`
           : "";
+      const persLine = log.personalitySnapshot
+        ? `p=${log.personalitySnapshot.playful.toFixed(2)} s=${log.personalitySnapshot.social.toFixed(2)} ` +
+          `c=${log.personalitySnapshot.curiosity.toFixed(2)} i=${log.personalitySnapshot.independence.toFixed(2)}`
+        : "";
       el.textContent =
         `${lastContextLine || lastUserLine}\n` +
-        `pick ${log.pick} (${log.utility.toFixed(2)})${prevBit}${novBit}${chainBit}\n` +
+        `pick ${log.pick} (${log.utility.toFixed(2)})${prevBit}${novBit}${chainBit}${persBit}\n` +
         `${log.reason}\n` +
         `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}` +
-        (memLine ? `\n${memLine}` : "");
+        (memLine ? `\n${memLine}` : "") +
+        (persLine ? `\n${persLine}` : "");
     }
   },
 

@@ -7,6 +7,18 @@ mod user_activity;
 mod window;
 
 use tauri::Manager;
+use std::fs;
+use std::path::Path;
+
+/// Persistance session d'observation (Phase 7) — écrit un JSON d'audit.
+#[tauri::command]
+fn write_session_audit(path: String, contents: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if let Some(parent) = p.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(p, contents).map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +36,7 @@ pub fn run() {
             desktop::accessibility_status,
             desktop::open_accessibility_settings,
             user_activity::get_user_activity,
+            write_session_audit,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

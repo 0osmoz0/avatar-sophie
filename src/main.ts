@@ -24,6 +24,7 @@ import {
   reveal,
   setClickThrough,
   setCursorTracking,
+  writeSessionAudit,
 } from "./platform/tauri";
 import { CanvasRenderer } from "./render/CanvasRenderer";
 import { StateMachine } from "./state/StateMachine";
@@ -87,8 +88,22 @@ async function bootstrap(): Promise<void> {
   const contextInterpreter = new LocalContextInterpreter();
 
   // Debug : localStorage.sophieDebugBrain / sophieDebugRuntime / sophieUseOllama = "1"
-  // Compteurs anim : Sophie.animationCounts / Sophie.lastAnim (changements de clip uniquement).
-  // Rapport runtime : Sophie.runtimeReport / Sophie.runtimeAudit.formatReport()
+  // Observation session : localStorage.sophieObserveSession = "1" force les flags debug.
+  // Compteurs anim : Sophie.animationCounts / Sophie.lastAnim
+  // Session : Sophie.runtimeAudit.exportSession() / flushSession()
+  //           → tools/.audit-cache/runtime-session.json (auto)
+  try {
+    // Phase 7 : activer l'observation par défaut si non configuré (désactiver = "0").
+    if (localStorage.getItem("sophieObserveSession") == null) {
+      localStorage.setItem("sophieObserveSession", "1");
+    }
+    if (localStorage.getItem("sophieObserveSession") === "1") {
+      localStorage.setItem("sophieDebugRuntime", "1");
+      localStorage.setItem("sophieDebugBrain", "1");
+    }
+  } catch {
+    /* ignore */
+  }
   window.Sophie = {
     ...window.Sophie,
     debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
@@ -101,8 +116,12 @@ async function bootstrap(): Promise<void> {
     animationCounts: {},
     lastAnim: null,
     runtimeReport: null,
+    lastSessionExport: null,
   };
   RuntimeAudit.reset();
+  RuntimeAudit.setPersistHandler(async (path, contents) => {
+    await writeSessionAudit(path, contents);
+  });
 
   /** Dernière source d'entrée non-brain (tray / pointeur) — reset après un tick. */
   let pendingInputSource: AnimSource | null = null;
@@ -244,6 +263,7 @@ async function bootstrap(): Promise<void> {
       prevBusy = activity.userBusy;
 
       const interpreted = contextInterpreter.update(activity, signals);
+      RuntimeAudit.noteContext(interpreted.mode, brain.memory);
 
       const decision = brain.update(now, dt, body, cursor, snap, activity, interpreted);
       if (decision.requestState) {

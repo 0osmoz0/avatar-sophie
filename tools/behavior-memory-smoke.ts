@@ -280,4 +280,21 @@ const NOW = 2_000_000;
   assert(rEx.immediateState === "EXCITED", "POKE playful + energy → EXCITED");
 }
 
+// --- 12. Personnalité Phase 6 ---
+{
+  const memory = new Memory();
+  const snap = memory.personalitySnapshot();
+  for (const [k, v] of Object.entries(snap)) {
+    assert(v >= 0 && v <= 1, `personality ${k} in [0,1]`);
+  }
+  memory.nudgePersonality({ playfulness: 0.3, sociability: 0.25 });
+  assert(memory.playfulness > 0.5, "nudge playfulness ↑");
+  const before = memory.playfulness;
+  for (let i = 0; i < 300; i++) memory.update(1);
+  assert(memory.playfulness < before, "trends decay toward baseline");
+  assert(memory.playfulness >= 0 && memory.playfulness <= 1, "decay stays in [0,1]");
+  const f = memory.personalityFactor("dance");
+  assert(f >= 0.9 && f <= 1.15, `personalityFactor dance in range (got ${f})`);
+}
+
 console.log("\nAll behavior-memory smoke checks passed.");

@@ -95,12 +95,21 @@ export class HangState implements PetState {
     // Position d'ancrage posée par le BehaviorBrain.
   }
 
-  exit(ctx: StateContext): void {
-    ctx.body.grounded = false;
+  exit(_ctx: StateContext): void {
+    // grounded géré par le Brain : dismount → sol ; chute → FALL.enter.
   }
 
   update(ctx: StateContext): StateResult {
-    // Le cerveau pilote la fin de HANG (repartir / tomber) — pas de FALL forcé ici.
+    // Filet : si le Brain n'a pas terminé le perch à temps, libérer HANG
+    // via transition d'état (bypass priorité) — pas un picker d'animation.
+    if (ctx.elapsed > 14) {
+      return {
+        animation: "hang",
+        followsBody: false,
+        motion: { kind: "idle" },
+        transition: "IDLE",
+      };
+    }
     return {
       animation: "hang",
       followsBody: false,

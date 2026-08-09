@@ -240,3 +240,9 @@ export async function onUserSpaceChanged(
   });
 }
 
+/** Phase 7 — persiste un export de session d'observation sur disque. */
+export async function writeSessionAudit(path: string, contents: string): Promise<void> {
+  if (!isTauri) return;
+  await invoke("write_session_audit", { path, contents });
+}
+

@@ -98,6 +98,8 @@ export class BehaviorBrain {
   requestWake(kind = "event"): void {
     this.#wakeRequested = true;
     this.#nextDecideAt = 0;
+    const busy = BUSY_STATES.has(this.#machine.currentId);
+    RuntimeAudit.softWake(kind, busy);
     BrainDebug.log(`wake requested (${kind})`);
   }
 
@@ -174,6 +176,23 @@ export class BehaviorBrain {
     if (stateId === "DRAG") {
       this.clearGoal("drag");
       return { motion: { kind: "idle" } };
+    }
+
+    // Busy orphelin (goal déjà fini, état non décidable) — sortie naturelle
+    // pour redonner la main au Brain. Pas un scheduler d'animation.
+    if (
+      !this.#goal &&
+      BUSY_STATES.has(stateId) &&
+      stateId !== "FALL" &&
+      this.#machine.elapsed > 16
+    ) {
+      if (stateId === "HANG") this.#dismountFromPerch(body);
+      this.requestWake("busyOrphan");
+      return {
+        motion: { kind: "idle" },
+        requestState: "IDLE",
+        forceState: true,
+      };
     }
 
     if (this.#pendingRecover && stateId === "IDLE") {
@@ -283,6 +302,8 @@ export class BehaviorBrain {
         novelty: ctx.memory.noveltyLabel(pick.c.id),
         noveltyValue: ctx.memory.noveltyModifier(pick.c.id),
         chain,
+        personality: ctx.memory.personalityHint(pick.c.id),
+        personalitySnapshot: ctx.memory.personalitySnapshot(),
       },
       this.memory,
       ctx.now,
@@ -374,7 +395,15 @@ export class BehaviorBrain {
         return { motion: { kind: "idle" } };
       }
       case "perch": {
+        const duration = goal.duration ?? 6;
         if (stateId !== "HANG") {
+          // Filet HangState → IDLE : ne pas ré-entrer en boucle, terminer le perch.
+          if (elapsed >= duration) {
+            this.#dismountFromPerch(body);
+            const next = this.#chooseAfterPerch();
+            if (!next) this.#dismountFromPerch(body);
+            return this.#finish({ next });
+          }
           this.#prePerchY = body.y;
           body.x = goal.anchor.x;
           body.y = goal.anchor.y;
@@ -388,7 +417,6 @@ export class BehaviorBrain {
             forceState: true,
           };
         }
-        const duration = goal.duration ?? 6;
         if (elapsed >= duration) {
           const next = this.#chooseAfterPerch();
           if (!next) this.#dismountFromPerch(body);
@@ -531,8 +559,12 @@ export class BehaviorBrain {
   }
 
   #idleResult(): BrainFrameResult {
-    if (this.#machine.currentId !== "IDLE" && this.#machine.currentId !== "FALL") {
-      return { motion: { kind: "idle" }, requestState: "IDLE" };
+    const sid = this.#machine.currentId;
+    if (sid !== "IDLE" && sid !== "FALL") {
+      // Fin de goal : toujours forcer IDLE — beaucoup d'états ont priority > IDLE
+      // (HANG=40, WALK=10, PUSH=30…). Sans force, Sophie reste bloquée sans re-score.
+      this.requestWake(sid === "HANG" ? "hangDismount" : "goalComplete");
+      return { motion: { kind: "idle" }, requestState: "IDLE", forceState: true };
     }
     return { motion: { kind: "idle" } };
   }

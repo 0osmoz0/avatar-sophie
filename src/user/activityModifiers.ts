@@ -150,5 +150,64 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     f *= 1 + mem.recentFrustration * 0.15;
   }
 
+  // --- Personnalité latente (Phase 6) — soft only 0.90–1.15 ---
+  f *= personalityFactor(considerationId, ctx);
+
   return f;
+}
+
+/**
+ * Multiplicateurs personnalité × contexte.
+ * Jamais d'animation forcée ; Needs/Memory cooldown restent prioritaires.
+ */
+export function personalityFactor(considerationId: string, ctx: BrainContext): number {
+  let f = ctx.memory.personalityFactor(considerationId);
+  const i = ctx.interpretedContext;
+  const mem = ctx.memory;
+  const ind = mem.independence;
+  const social = mem.sociability;
+  const cur = mem.curiosityBias;
+  const play = mem.playfulness;
+
+  if (i.mode === "focused_work" || i.mode === "gaming") {
+    if (
+      (considerationId === "work" ||
+        considerationId === "think" ||
+        considerationId === "study") &&
+      ind > 0.55
+    ) {
+      f *= 1 + (ind - 0.5) * 0.16;
+    }
+    // Sociability haute : pas d'interruption forcée — happy seulement si Memory déjà pertinente.
+    if (
+      social > 0.6 &&
+      considerationId === "happy" &&
+      (mem.recentWithin("pet", ctx.now, 40_000) ||
+        mem.recentWithin("user_returned", ctx.now, 45_000))
+    ) {
+      f *= 1.06;
+    }
+  }
+
+  if (i.mode === "idle_away" || i.disturbanceTolerance === "high") {
+    if (
+      cur > 0.55 &&
+      (considerationId === "look" ||
+        considerationId === "window" ||
+        considerationId === "perch")
+    ) {
+      f *= 1 + (cur - 0.5) * 0.18;
+    }
+    if (play > 0.58 && considerationId === "dance" && ctx.needs.boredom >= 48) {
+      f *= 1 + (play - 0.5) * 0.14;
+    }
+  }
+
+  if (mem.recentWithin("user_returned", ctx.now, 45_000) && social > 0.55) {
+    if (considerationId === "happy" || considerationId === "look") {
+      f *= 1 + (social - 0.5) * 0.12;
+    }
+  }
+
+  return Math.min(1.15, Math.max(0.9, f));
 }

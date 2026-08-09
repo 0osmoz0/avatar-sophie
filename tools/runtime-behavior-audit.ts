@@ -48,6 +48,9 @@ import {
 import { interpretRules } from "../src/user/LocalContextInterpreter";
 import { userActivityFactor } from "../src/user/activityModifiers";
 import type { StateId } from "../src/state/types";
+import { PRIORITY } from "../src/state/types";
+import { StateMachine } from "../src/state/StateMachine";
+import { createAllStates, IdleState } from "../src/state/states";
 import type { Goal } from "../src/behavior/Goal";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -821,6 +824,65 @@ console.log("\n--- Comparaison principes Phase 4B ---");
     "Réf. simu 4B : walk→look→walk=17, look→walk→look=1, idle→look→idle=2 — non rejoué ici",
     "info",
   );
+}
+
+// === Phase 8 — rythme / sortie HANG ========================================
+console.log("\n--- Phase 8 rythme (HANG exit) ---");
+{
+  assert(PRIORITY.IDLE < PRIORITY.HANG, "IDLE priority < HANG (sortie force requise)");
+
+  const brainSrc = readFileSync(join(ROOT, "src/behavior/BehaviorBrain.ts"), "utf8");
+  assert(/const force = sid === "HANG"/.test(brainSrc) || /forceState:\s*true/.test(brainSrc), "HANG dismount → force IDLE");
+  assert(/busyOrphan|hangOrphan/.test(brainSrc), "HANG/busy orphan safety (wake soft)");
+  assert(/forceState:\s*true/.test(brainSrc), "idleResult force IDLE sur fin de goal");
+
+  const auditSrc = readFileSync(join(ROOT, "src/behavior/RuntimeAudit.ts"), "utf8");
+  assert(/softWake\(/.test(auditSrc), "RuntimeAudit.softWake présent");
+  assert(/formatRhythmReport/.test(auditSrc), "formatRhythmReport présent");
+  assert(/hang→idle/.test(auditSrc), "chaîne hang→idle tracée");
+
+  const needs = new Needs();
+  const body = {
+    x: 100,
+    y: 200,
+    vx: 0,
+    vy: 0,
+    grounded: false,
+    facing: 1 as const,
+    faceToward() {},
+  } as unknown as Body;
+  const cursor = {
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    idleSeconds: 10,
+  } as unknown as CursorTracker;
+  const machine = new StateMachine(new IdleState(), createAllStates());
+  const bounds = { left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800 };
+  const baseCtx = { body, needs, cursor, bounds, now: 1_000 };
+  machine.start(baseCtx);
+  assert(machine.request("HANG", true), "entrer HANG (force)");
+  machine.update(baseCtx, 0.016);
+  assert(machine.currentId === "HANG", "état HANG actif");
+  assert(
+    machine.request("IDLE", false) === false,
+    "IDLE sans force refusé depuis HANG (bug Phase 7)",
+  );
+  assert(machine.request("IDLE", true) === true, "IDLE avec force accepté depuis HANG");
+  machine.update(baseCtx, 0.016);
+  assert(machine.currentId === "IDLE", "HANG → IDLE après force");
+
+  assert(isBusyState("WORK"), "WORK reste busy");
+  const petBusy = resolveInteraction({
+    kind: "pet",
+    stateId: "WORK" as StateId,
+    memory: new Memory(),
+    needs: new Needs(),
+    now: 1_000_000,
+  });
+  assert(petBusy.deferred === true, "PET@WORK reste différé (Phase 8)");
+  assert(petBusy.immediateState === null, "PET@WORK n'interrompt pas");
 }
 
 // === Rapport ================================================================
