@@ -126,6 +126,21 @@ const FAMILY: Record<string, BehaviorFamily> = {
   crying: "emotion",
   blow_kiss: "emotion",
   happy: "emotion",
+  edge_peek: "explore",
+  edge_stop: "calm",
+  edge_step_back: "locomotion",
+  environment_inspect: "explore",
+  confused_environment: "calm",
+  environment_surprise: "emotion",
+  look_up: "calm",
+  look_down: "calm",
+  look_over_shoulder: "calm",
+  phone_check: "social",
+  phone_text: "social",
+  phone_call: "social",
+  computer_type: "focus",
+  computer_think: "calm",
+  computer_check: "focus",
 };
 
 const PERCEPTUAL_LOOPS = [

@@ -4,6 +4,7 @@ import { goToTimeoutSec } from "../Goal";
 import type { NeedsDeltas } from "../Needs";
 import type { StateId } from "../../state/types";
 import { userActivityFactor, userHint, withUserContext } from "../../user/activityModifiers";
+import { isSafeMovement } from "../../environment/EnvironmentContext";
 import { WALK_SPEED } from "../../motion/Locomotion";
 
 function ready(ctx: BrainContext, id: string): boolean {
@@ -34,9 +35,20 @@ function chainBoost(ctx: BrainContext, id: string): number {
   if (!prev) return 1;
 
   const table: Record<string, Partial<Record<string, number>>> = {
-    think: { work: 1.22, study: 1.18 },
-    work: { coffee: 1.12, yawn: 1.12, think: 1.12, idle: 1.08 },
-    look: { perch: 1.16, window: 1.16 },
+    think: { work: 1.22, study: 1.18, environment_inspect: 1.08 },
+    work: { coffee: 1.12, yawn: 1.12, think: 1.12, idle: 1.08, computer_think: 1.1 },
+    look: { perch: 1.16, window: 1.16, edge_peek: 1.1, environment_inspect: 1.08 },
+    edge_peek: { edge_step_back: 1.1, idle: 1.08, look: 1.06 },
+    edge_stop: { edge_step_back: 1.1, idle: 1.08 },
+    edge_step_back: { idle: 1.1, look: 1.06 },
+    environment_inspect: { think: 1.1, look: 1.08, idle: 1.06 },
+    confused_environment: { think: 1.12, idle: 1.08 },
+    environment_surprise: { look: 1.1, idle: 1.08 },
+    phone_check: { phone_text: 1.1, idle: 1.06, look: 1.05 },
+    phone_text: { phone_check: 1.08, idle: 1.06 },
+    phone_call: { idle: 1.08, think: 1.05 },
+    computer_type: { computer_think: 1.1, idle: 1.06 },
+    computer_think: { computer_type: 1.06, look: 1.05 },
     dance: { idle: 1.12, look: 1.1, walk: 1.08 },
     eat: { idle: 1.12, walk: 1.1 },
     yawn: { sleep: 1.15, idle: 1.08, work: 1.06, coffee: 1.1 },
@@ -80,7 +92,10 @@ function oscillationPenalty(ctx: BrainContext, id: string): number {
     (a === "idle" && b === "walk") ||
     (a === "walk" && b === "idle") ||
     (a === "look" && b === "think") ||
-    (a === "think" && b === "look");
+    (a === "think" && b === "look") ||
+    (a === "edge_peek" && b === "edge_peek") ||
+    (a === "environment_inspect" && b === "environment_inspect") ||
+    (a === "phone_check" && b === "phone_check");
 
   return oscillating ? 0.65 : 1;
 }
@@ -203,11 +218,16 @@ export const walkSomewhere: Consideration = {
     ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
+    const env = ctx.environment;
+    if (env.inVoid || env.hanging) return 0;
+    if (env.dangerousEdge && env.movingTowardEdge) return 0;
     const restlessness = n01(ctx.needs.boredom);
     const settled = ctx.idleSeconds > 10 ? 0.14 : ctx.idleSeconds > 6 ? 0.07 : 0;
     let base = 0.06 + restlessness * 0.48 + settled;
     if (ctx.needs.boredom < 35) base *= 0.7;
     base *= idleScale(ctx, "move");
+    if (env.dangerousEdge) base *= 0.55;
+    else if (env.nearEdge) base *= 0.82;
     const dx = windowHorizDist(ctx);
     if (
       dx != null &&
@@ -223,8 +243,17 @@ export const walkSomewhere: Consideration = {
   onComplete: { boredom: -8, curiosity: 4 },
   buildGoal(ctx) {
     const floors = ctx.world.points.filter((p) => p.kind === "floor" || p.kind === "corner");
-    const pick = floors[Math.floor(Math.random() * Math.max(1, floors.length))];
-    const x = pick?.x ?? ctx.world.width * (0.2 + Math.random() * 0.6);
+    const candidates = (floors.length ? floors.map((p) => p.x) : [
+      ctx.world.width * 0.25,
+      ctx.world.width * 0.5,
+      ctx.world.width * 0.75,
+    ]).filter((x) => {
+      const dir = Math.sign(x - ctx.body.x) as -1 | 0 | 1;
+      const dist = Math.abs(x - ctx.body.x);
+      return isSafeMovement(ctx.environment, dir === 0 ? 1 : dir, Math.max(40, dist));
+    });
+    const pool = candidates.length > 0 ? candidates : [Math.min(ctx.environment.maxX - 8, Math.max(ctx.environment.minX + 8, ctx.body.x))];
+    const x = pool[Math.floor(Math.random() * pool.length)]!;
     const dist = Math.abs(x - ctx.body.x);
     return {
       kind: "goTo",
@@ -483,6 +512,7 @@ export const perchEdge: Consideration = {
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (!ctx.world.nearestEdge) return 0;
+    if (!ctx.environment.safeToPerch) return 0;
     if (ctx.needs.curiosity < 35) return 0;
     const edge = ctx.world.nearestEdge;
     const dist = Math.abs(edge.x - ctx.body.x);
@@ -504,6 +534,7 @@ export const perchEdge: Consideration = {
       label: "perch",
       timeoutSec: goToTimeoutSec(dist, WALK_SPEED),
       invalidate: (c) => {
+        if (!c.environment.safeToPerch) return true;
         const e = c.world.nearestEdge;
         if (!e) return true;
         return Math.abs(e.x - targetX) > 120;
@@ -513,7 +544,11 @@ export const perchEdge: Consideration = {
         anchor,
         duration: 5 + Math.random() * 6,
         label: "perch",
-        gate: (c) => gates.edgeStillNear(c) && gates.curiosityOk(c) && gates.notInterrupted(c),
+        gate: (c) =>
+          c.environment.safeToPerch &&
+          gates.edgeStillNear(c) &&
+          gates.curiosityOk(c) &&
+          gates.notInterrupted(c),
       },
     };
   },
@@ -788,6 +823,361 @@ export const recoverFall: Consideration = {
   buildGoal: () => ({ kind: "activity", state: "SURPRISE", label: "recover" }),
 };
 
+/** --- Phase 9B environment / phone / PC (clips existants ou states phone) --- */
+
+export const edgePeek: Consideration = {
+  id: "edge_peek",
+  priority: 2,
+  cooldownMs: 55_000,
+  reason: (ctx) =>
+    withUserReason(
+      `nearEdge=${ctx.environment.nearEdge} curiosity=${ctx.needs.curiosity.toFixed(0)}`,
+      ctx,
+      "edge_peek",
+    ),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.nearEdge || !e.onValidSurface || e.dangerousEdge) return 0;
+    if (ctx.needs.curiosity < 30) return 0;
+    const base =
+      0.12 + n01(ctx.needs.curiosity) * 0.45 + (e.nearWindow ? 0.08 : 0);
+    return ctxScore(ctx, this.id, base * idleScale(ctx, "explore"));
+  },
+  onComplete: { curiosity: -6 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 2.8 + Math.random() * 2,
+    label: "edge_peek",
+  }),
+};
+
+export const edgeStop: Consideration = {
+  id: "edge_stop",
+  priority: 3,
+  cooldownMs: 40_000,
+  reason: (ctx) =>
+    withUserReason(`atEdge=${ctx.environment.atEdge} dangerous=${ctx.environment.dangerousEdge}`, ctx, "edge_stop"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.dangerousEdge && !e.atEdge) return 0;
+    if (!e.onValidSurface) return 0;
+    return ctxScore(ctx, this.id, 0.3 + (e.movingTowardEdge ? 0.22 : 0.1));
+  },
+  buildGoal: () => ({
+    kind: "idle",
+    duration: 2.2 + Math.random() * 2,
+    label: "edge_stop",
+  }),
+};
+
+export const edgeStepBack: Consideration = {
+  id: "edge_step_back",
+  priority: 3,
+  cooldownMs: 48_000,
+  reason: (ctx) =>
+    withUserReason(`dangerousEdge step-back`, ctx, "edge_step_back"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.dangerousEdge || !e.onValidSurface) return 0;
+    return ctxScore(ctx, this.id, 0.35 + (e.movingTowardEdge ? 0.2 : 0.08));
+  },
+  onComplete: { boredom: -4 },
+  buildGoal(ctx) {
+    const e = ctx.environment;
+    const dir: -1 | 1 = e.nearLeftEdge ? 1 : -1;
+    const x = Math.min(e.maxX - 10, Math.max(e.minX + 10, ctx.body.x + dir * 70));
+    const dist = Math.abs(x - ctx.body.x);
+    return {
+      kind: "goTo",
+      x,
+      label: "edge_step_back",
+      timeoutSec: goToTimeoutSec(dist, WALK_SPEED),
+      then: { kind: "idle", duration: 1.2, label: "edge_step_back_pause" },
+    };
+  },
+};
+
+export const environmentInspect: Consideration = {
+  id: "environment_inspect",
+  priority: 1,
+  cooldownMs: 70_000,
+  reason: (ctx) =>
+    withUserReason(`inspect idle=${ctx.idleSeconds.toFixed(0)}s`, ctx, "environment_inspect"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface) return 0;
+    if (!(e.idle || ctx.idleSeconds > 8)) return 0;
+    if (ctx.needs.curiosity < 40) return 0;
+    if (e.focused) return 0;
+    const interest = (e.nearWindow || e.nearPerch || e.nearEdge ? 0.12 : 0.04);
+    return ctxScore(
+      ctx,
+      this.id,
+      (0.1 + n01(ctx.needs.curiosity) * 0.4 + interest) * idleScale(ctx, "explore"),
+    );
+  },
+  onComplete: { curiosity: -8, boredom: -5 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 3.5 + Math.random() * 3,
+    label: "environment_inspect",
+  }),
+};
+
+export const confusedEnvironment: Consideration = {
+  id: "confused_environment",
+  priority: 2,
+  cooldownMs: 90_000,
+  reason: (ctx) =>
+    withUserReason(
+      `void=${ctx.environment.inVoid} dangerous=${ctx.environment.dangerousEdge}`,
+      ctx,
+      "confused_environment",
+    ),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!(e.inVoid || (e.dangerousEdge && e.nearCorner))) return 0;
+    return ctxScore(ctx, this.id, 0.2 + (e.inVoid ? 0.25 : 0.1));
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "THINK",
+    duration: 3 + Math.random() * 2,
+    label: "confused_environment",
+  }),
+};
+
+export const environmentSurprise: Consideration = {
+  id: "environment_surprise",
+  priority: 2,
+  cooldownMs: 80_000,
+  reason: (ctx) => withUserReason(`env surprise`, ctx, "environment_surprise"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    // Rare : curseur qui approche vite près d'un bord, ou void brief.
+    if (e.cursorApproaching && e.cursorNearby && e.nearEdge) {
+      return ctxScore(ctx, this.id, 0.18 + n01(ctx.needs.curiosity) * 0.2);
+    }
+    return 0;
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "SURPRISE",
+    duration: 1.6,
+    label: "environment_surprise",
+  }),
+};
+
+export const lookUp: Consideration = {
+  id: "look_up",
+  priority: 1,
+  cooldownMs: 60_000,
+  reason: (ctx) => withUserReason(`look_up nearTop/window`, ctx, "look_up"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface) return 0;
+    if (!(e.nearWindow || e.nearPerch || e.nearTopEdge)) return 0;
+    if (ctx.needs.curiosity < 38) return 0;
+    if (e.focused) return 0;
+    return ctxScore(ctx, this.id, 0.11 + n01(ctx.needs.curiosity) * 0.28);
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 2.5 + Math.random() * 2,
+    label: "look_up",
+  }),
+};
+
+export const lookDown: Consideration = {
+  id: "look_down",
+  priority: 1,
+  cooldownMs: 60_000,
+  reason: (ctx) => withUserReason(`look_down`, ctx, "look_down"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface || e.focused) return 0;
+    if (ctx.idleSeconds < 6) return 0;
+    if (ctx.needs.curiosity < 35 && ctx.needs.boredom < 40) return 0;
+    return ctxScore(ctx, this.id, 0.09 + n01(ctx.needs.boredom) * 0.2);
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 2.2 + Math.random() * 2,
+    label: "look_down",
+  }),
+};
+
+export const lookOverShoulder: Consideration = {
+  id: "look_over_shoulder",
+  priority: 1,
+  cooldownMs: 65_000,
+  reason: (ctx) => withUserReason(`shoulder cursorLeaving/return`, ctx, "look_over_shoulder"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface) return 0;
+    if (!(e.cursorLeaving || e.returned || e.cursorApproaching)) return 0;
+    return ctxScore(ctx, this.id, 0.14 + (e.returned ? 0.12 : 0.05));
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 2.4 + Math.random() * 1.5,
+    label: "look_over_shoulder",
+  }),
+};
+
+/** Téléphone — clips via states PHONE_* (sheets). */
+export const phoneCheck: Consideration = {
+  id: "phone_check",
+  priority: 2,
+  cooldownMs: 110_000,
+  reason: (ctx) => withUserReason(`phone_check boredom=${ctx.needs.boredom.toFixed(0)}`, ctx, "phone_check"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface || e.focused) return 0;
+    if (!(e.idle || ctx.idleSeconds > 10 || ctx.needs.boredom >= 45)) return 0;
+    if (ctx.memory.recentPositiveInteraction > 0.45) return 0;
+    const base =
+      0.2 + n01(ctx.needs.boredom) * 0.42 + n01(ctx.needs.curiosity) * 0.18;
+    return ctxScore(ctx, this.id, base);
+  },
+  onComplete: { boredom: -10, social: -4 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "PHONE_CHECK",
+    duration: 4 + Math.random() * 4,
+    label: "phone_check",
+  }),
+};
+
+export const phoneText: Consideration = {
+  id: "phone_text",
+  priority: 2,
+  cooldownMs: 130_000,
+  reason: (ctx) => withUserReason(`phone_text`, ctx, "phone_text"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface || e.focused) return 0;
+    if (ctx.needs.boredom < 40 && ctx.needs.social < 45) return 0;
+    if (!(e.idle || ctx.memory.recentlyDid("phone_check", 3))) return 0;
+    return ctxScore(ctx, this.id, 0.18 + n01(ctx.needs.social) * 0.32 + n01(ctx.needs.boredom) * 0.22);
+  },
+  onComplete: { boredom: -12, social: -6 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "PHONE_TEXT",
+    duration: 5 + Math.random() * 5,
+    label: "phone_text",
+  }),
+};
+
+export const phoneCall: Consideration = {
+  id: "phone_call",
+  priority: 2,
+  cooldownMs: 180_000,
+  reason: (ctx) => withUserReason(`phone_call`, ctx, "phone_call"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface || e.focused || e.busy) return 0;
+    if (ctx.needs.social < 50 && ctx.needs.boredom < 55) return 0;
+    if (!e.idle && ctx.idleSeconds < 12) return 0;
+    return ctxScore(ctx, this.id, 0.08 + n01(ctx.needs.social) * 0.28);
+  },
+  onComplete: { social: -10, boredom: -8 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "PHONE_CALL",
+    duration: 6 + Math.random() * 6,
+    label: "phone_call",
+  }),
+};
+
+export const computerType: Consideration = {
+  id: "computer_type",
+  priority: 2,
+  cooldownMs: 100_000,
+  reason: (ctx) => withUserReason(`computer_type focus mimic`, ctx, "computer_type"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    const e = ctx.environment;
+    if (!e.onValidSurface) return 0;
+    // Justifié par contexte travail / focused — pas random.
+    const workish =
+      e.focused ||
+      ctx.userActivity.category === "coding" ||
+      ctx.userActivity.category === "productivity";
+    if (!workish) return 0;
+    if (ctx.needs.energy < 25) return 0;
+    return ctxScore(ctx, this.id, 0.2 + n01(ctx.needs.curiosity) * 0.25 + (e.focused ? 0.2 : 0.08));
+  },
+  onComplete: { boredom: -6, energy: -4 },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "WORK",
+    duration: 6 + Math.random() * 6,
+    label: "computer_type",
+  }),
+};
+
+export const computerThink: Consideration = {
+  id: "computer_think",
+  priority: 1,
+  cooldownMs: 85_000,
+  reason: (ctx) => withUserReason(`computer_think`, ctx, "computer_think"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    if (!ctx.environment.onValidSurface) return 0;
+    const workish =
+      ctx.environment.focused ||
+      ctx.userActivity.category === "coding" ||
+      ctx.memory.recentlyDid("computer_type", 2) ||
+      ctx.memory.recentlyDid("work", 2);
+    if (!workish) return 0;
+    return ctxScore(ctx, this.id, 0.1 + n01(ctx.needs.curiosity) * 0.25);
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "THINK",
+    duration: 3.5 + Math.random() * 3,
+    label: "computer_think",
+  }),
+};
+
+export const computerCheck: Consideration = {
+  id: "computer_check",
+  priority: 1,
+  cooldownMs: 95_000,
+  reason: (ctx) => withUserReason(`computer_check screen`, ctx, "computer_check"),
+  utility(ctx) {
+    if (!ready(ctx, this.id)) return 0;
+    if (!ctx.environment.onValidSurface) return 0;
+    if (!ctx.environment.focused && ctx.userActivity.category !== "coding") return 0;
+    return ctxScore(ctx, this.id, 0.09 + n01(ctx.needs.curiosity) * 0.22);
+  },
+  buildGoal: () => ({
+    kind: "activity",
+    state: "LOOK_AROUND",
+    duration: 2.5 + Math.random() * 2,
+    label: "computer_check",
+  }),
+};
+
 export const ALL_CONSIDERATIONS: Consideration[] = [
   idleHere,
   walkSomewhere,
@@ -808,4 +1198,19 @@ export const ALL_CONSIDERATIONS: Consideration[] = [
   crying,
   blowKiss,
   happy,
+  edgePeek,
+  edgeStop,
+  edgeStepBack,
+  environmentInspect,
+  confusedEnvironment,
+  environmentSurprise,
+  lookUp,
+  lookDown,
+  lookOverShoulder,
+  phoneCheck,
+  phoneText,
+  phoneCall,
+  computerType,
+  computerThink,
+  computerCheck,
 ];

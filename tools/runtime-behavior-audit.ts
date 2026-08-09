@@ -38,6 +38,7 @@ import {
   dance,
 } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
@@ -115,6 +116,7 @@ function mockCtx(
     memory,
     world: partial.world ?? baseWorld(),
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 8,
@@ -352,6 +354,7 @@ console.log("\n--- 5. User became idle ---");
     memory,
     now: now + 500,
     userActivity: idleSnap,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(idleSnap),
     world: baseWorld({
       windows: [win],
@@ -402,6 +405,7 @@ console.log("\n--- 6. Contextes utilisateur ---");
   const fCtx = mockCtx({
     needs,
     userActivity: focused,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(focused),
   });
   const iCtx = mockCtx({
@@ -412,6 +416,7 @@ console.log("\n--- 6. Contextes utilisateur ---");
   const gCtx = mockCtx({
     needs,
     userActivity: gaming,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(gaming),
   });
 
@@ -583,6 +588,7 @@ console.log("\n--- 8. Cursor ---");
     stateId: "IDLE",
     cursor,
     userActivity: neutral,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(neutral),
   });
   const u = reactCursor.utility(ctx);
@@ -607,6 +613,7 @@ console.log("\n--- 8. Cursor ---");
     memory: new Memory(),
     stateId: "IDLE",
     userActivity: focused,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(focused),
     cursor,
   });
@@ -758,7 +765,7 @@ console.log("\n--- Invariants structurels ---");
 
   const modifiers = readFileSync(join(ROOT, "src/user/activityModifiers.ts"), "utf8");
   assert(
-    !/suggestedGoal|requestState|buildGoal/.test(modifiers),
+    !/suggestedGoal|requestState\s*\(|\.buildGoal/.test(modifiers),
     "✓ aucune consideration ne force un Goal via activityModifiers",
   );
   assert(
@@ -785,6 +792,7 @@ console.log("\n--- Invariants structurels ---");
     mockCtx({
       needs,
       userActivity: focused,
+      environment: emptyEnvironment(),
       interpretedContext: interpretRules(focused),
       hour: 14,
     }),

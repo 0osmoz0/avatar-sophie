@@ -152,8 +152,75 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
 
   // --- Personnalité latente (Phase 6) — soft only 0.90–1.15 ---
   f *= personalityFactor(considerationId, ctx);
+  // --- Environnement (Phase 9B) — soft only 0.85–1.15 ---
+  f *= environmentFactor(considerationId, ctx);
 
   return f;
+}
+
+/**
+ * Facteurs environnementaux soft — jamais de Goal / requestState / anim forcée.
+ */
+export function environmentFactor(considerationId: string, ctx: BrainContext): number {
+  const e = ctx.environment;
+  if (!e) return 1;
+  let f = 1;
+
+  if (e.dangerousEdge) {
+    if (considerationId === "edge_step_back" || considerationId === "edge_stop") f *= 1.12;
+    if (considerationId === "walk") f *= 0.7;
+    if (considerationId === "perch") f *= 0.5;
+  } else if (e.nearEdge) {
+    if (considerationId === "edge_peek" || considerationId === "edge_stop") f *= 1.08;
+    if (considerationId === "walk") f *= 0.88;
+  }
+
+  if (e.nearWindow) {
+    if (
+      considerationId === "window" ||
+      considerationId === "look" ||
+      considerationId === "edge_peek" ||
+      considerationId === "look_up"
+    ) {
+      f *= 1.08;
+    }
+  }
+
+  if (e.idle && ctx.needs.curiosity >= 40) {
+    if (considerationId === "environment_inspect") f *= 1.08;
+    if (considerationId === "look_up" || considerationId === "look_down") f *= 1.05;
+  }
+
+  if (e.cursorApproaching && e.cursorNearby) {
+    if (considerationId === "look" || considerationId === "look_over_shoulder") f *= 1.08;
+    if (considerationId === "happy") f *= 1.05;
+  }
+  if (e.cursorLeaving) {
+    if (considerationId === "look_over_shoulder") f *= 1.06;
+    if (considerationId === "cursor") f *= 0.85;
+  }
+
+  if (e.focused) {
+    if (
+      considerationId.startsWith("phone_") ||
+      considerationId === "dance" ||
+      considerationId === "edge_peek"
+    ) {
+      f *= 0.55;
+    }
+    if (considerationId.startsWith("computer_")) f *= 1.08;
+  }
+
+  // Musique : uniquement si signal fiable (audioPlaying === true). Null = no boost.
+  if (e.musicPlaying === true && considerationId === "dance") f *= 1.1;
+  if (e.musicPlaying === null && considerationId === "dance") {
+    /* no fake music boost */
+  }
+
+  if (e.inVoid && considerationId === "confused_environment") f *= 1.12;
+  if (e.inVoid && considerationId === "walk") f *= 0.2;
+
+  return Math.min(1.15, Math.max(0.85, f));
 }
 
 /**

@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_CONSIDERATIONS } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import { Memory } from "../src/behavior/Memory";
 import { Needs } from "../src/behavior/Needs";
 import type { Body } from "../src/motion/Body";
@@ -72,6 +73,21 @@ const FAMILY: Record<string, Family> = {
   crying: "emotion",
   blow_kiss: "emotion",
   happy: "emotion",
+  edge_peek: "explore",
+  edge_stop: "calm",
+  edge_step_back: "locomotion",
+  environment_inspect: "explore",
+  confused_environment: "calm",
+  environment_surprise: "emotion",
+  look_up: "calm",
+  look_down: "calm",
+  look_over_shoulder: "calm",
+  phone_check: "social",
+  phone_text: "social",
+  phone_call: "social",
+  computer_type: "focus",
+  computer_think: "calm",
+  computer_check: "focus",
 };
 
 type AuditSummary = {
@@ -176,6 +192,7 @@ function ctxOf(opts: {
     memory: opts.memory,
     world: worldBase(opts),
     userActivity: user,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(user),
     stateId: opts.stateId ?? "IDLE",
     idleSeconds: opts.idleSeconds ?? 10,

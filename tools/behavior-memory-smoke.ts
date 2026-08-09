@@ -11,6 +11,7 @@ import {
 } from "../src/behavior/InteractionResolver";
 import { angry, happy, blowKiss, lookAround } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
@@ -54,6 +55,7 @@ function mockCtx(
       nearestEdge: null,
     }) as WorldSnapshot,
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 8,
@@ -190,6 +192,7 @@ const NOW = 2_000_000;
     memory,
     now: NOW + 1_000,
     userActivity: idleUser,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(idleUser),
   });
   const lookF = userActivityFactor("look", ctx);

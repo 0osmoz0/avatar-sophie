@@ -303,6 +303,9 @@ async function bootstrap(): Promise<void> {
         "BLOW_KISS",
         "POKE",
         "LOVE",
+        "PHONE_CHECK",
+        "PHONE_TEXT",
+        "PHONE_CALL",
       ].includes(machine.currentId);
 
       const intent = stationary ? result.motion : decision.motion;

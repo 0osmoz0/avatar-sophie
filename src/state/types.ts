@@ -35,7 +35,10 @@ export type StateId =
   | "CRYING"
   | "SURPRISE"
   | "PUSH"
-  | "PULL";
+  | "PULL"
+  | "PHONE_CHECK"
+  | "PHONE_TEXT"
+  | "PHONE_CALL";
 
 export interface StateContext {
   body: Body;
@@ -97,4 +100,7 @@ export const PRIORITY: Record<StateId, number> = {
   SURPRISE: 50,
   PUSH: 30,
   PULL: 30,
+  PHONE_CHECK: 22,
+  PHONE_TEXT: 22,
+  PHONE_CALL: 22,
 };

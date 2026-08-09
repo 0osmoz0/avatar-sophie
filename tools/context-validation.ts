@@ -5,6 +5,7 @@
 
 import { ALL_CONSIDERATIONS } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import { Memory } from "../src/behavior/Memory";
 import { Needs } from "../src/behavior/Needs";
 import type { Body } from "../src/motion/Body";
@@ -83,6 +84,7 @@ function mockCtx(
       nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
     }) as WorldSnapshot,
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 10,
@@ -182,6 +184,7 @@ needsBalanced.social = 45;
 const ctxFocused = mockCtx({
   needs: needsBalanced,
   userActivity: codingSnap,
+  environment: emptyEnvironment(),
   interpretedContext: focused,
 });
 const ctxIdle = mockCtx({
@@ -261,6 +264,7 @@ console.log("\n=== 4. Priorités Needs / Memory / BUSY ===");
   const ctx = mockCtx({
     needs: rested,
     userActivity: codingSnap,
+    environment: emptyEnvironment(),
     interpretedContext: focused,
     hour: 14,
   });
@@ -278,6 +282,7 @@ console.log("\n=== 4. Priorités Needs / Memory / BUSY ===");
     needs: exhausted,
     memory: mem,
     userActivity: codingSnap,
+    environment: emptyEnvironment(),
     interpretedContext: focused,
     hour: 23,
   });
@@ -299,6 +304,7 @@ console.log("\n=== 4. Priorités Needs / Memory / BUSY ===");
     needs: playful,
     memory: mem,
     userActivity: idleSnap,
+    environment: emptyEnvironment(),
     interpretedContext: idle,
     now: 1_010_000,
   });

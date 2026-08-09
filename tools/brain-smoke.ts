@@ -21,6 +21,7 @@ import {
   happy,
 } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
@@ -65,6 +66,7 @@ function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContex
     memory,
     world,
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 12,
@@ -213,6 +215,7 @@ const focusUser = makeTestSnapshot({
 const ctxFocus = mockCtx({
   needs: cursorNeeds,
   userActivity: focusUser,
+  environment: emptyEnvironment(),
   interpretedContext: interpretRules(focusUser),
   cursor: {
     x: 650,

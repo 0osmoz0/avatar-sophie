@@ -5,6 +5,7 @@
 
 import { ALL_CONSIDERATIONS } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import { Memory } from "../src/behavior/Memory";
 import { Needs } from "../src/behavior/Needs";
 import type { Body } from "../src/motion/Body";
@@ -65,6 +66,7 @@ function mockCtx(
       nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
     }) as WorldSnapshot,
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 10,
@@ -103,6 +105,7 @@ function mockCtx(
     needs: tired,
     memory: new Memory(),
     userActivity: snap,
+    environment: emptyEnvironment(),
     interpretedContext: interpreted,
   });
   // sleep gated by needs — factor soft n'impose pas le goal

@@ -17,6 +17,9 @@ const BUSY_NO_INTERRUPT = new Set<StateId>([
   "COFFEE",
   "STUDY",
   "OVERWORK",
+  "PHONE_CHECK",
+  "PHONE_TEXT",
+  "PHONE_CALL",
 ]);
 
 /** Cooldowns anti-spam pour réactions émotionnelles immédiates. */

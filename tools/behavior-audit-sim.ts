@@ -5,6 +5,7 @@
 
 import { ALL_CONSIDERATIONS } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import { Memory } from "../src/behavior/Memory";
 import { Needs } from "../src/behavior/Needs";
 import type { Body } from "../src/motion/Body";
@@ -112,6 +113,7 @@ function ctxOf(opts: {
     memory: opts.memory ?? new Memory(),
     world,
     userActivity: user,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(user),
     stateId: "IDLE",
     idleSeconds: opts.idleSeconds ?? 10,

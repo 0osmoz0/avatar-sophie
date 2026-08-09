@@ -16,6 +16,8 @@ import type { StateId } from "../state/types";
 import type { StateMachine } from "../state/StateMachine";
 import { ALL_CONSIDERATIONS } from "./considerations/catalog";
 import type { BrainContext, Consideration } from "./considerations/types";
+import { EnvironmentTracker } from "../environment/EnvironmentContext";
+import { isPerchAnchorValid } from "../environment/EnvironmentContext";
 import { WALK_SPEED, RUN_SPEED, type MotionIntent } from "../motion/Locomotion";
 import { EventBus } from "../core/EventBus";
 import { BrainDebug } from "./BrainDebug";
@@ -62,6 +64,9 @@ const BUSY_STATES: ReadonlySet<StateId> = new Set([
   "HANG",
   "FALL",
   "DRAG",
+  "PHONE_CHECK",
+  "PHONE_TEXT",
+  "PHONE_CALL",
 ]);
 
 export class BehaviorBrain {
@@ -83,6 +88,7 @@ export class BehaviorBrain {
   #prePerchY = 0;
   /** Label consideration pour logs d'abandon de chaîne. */
   #chainRoot = "";
+  readonly #envTracker = new EnvironmentTracker();
 
   constructor(machine: StateMachine, needs: Needs, considerations = ALL_CONSIDERATIONS) {
     this.#machine = machine;
@@ -154,6 +160,16 @@ export class BehaviorBrain {
 
     this.memory.update(dt);
 
+    const environment = this.#envTracker.update({
+      body,
+      world,
+      cursor,
+      interpreted: interpretedContext,
+      userActivity,
+      stateId,
+      memoryReturned: this.memory.recentWithin("user_returned", now, 45_000),
+    });
+
     this.#lastCtx = {
       now,
       body,
@@ -163,6 +179,7 @@ export class BehaviorBrain {
       world,
       userActivity,
       interpretedContext,
+      environment,
       stateId,
       idleSeconds: this.#idleSince,
       hour: new Date().getHours(),
@@ -421,6 +438,12 @@ export class BehaviorBrain {
           const next = this.#chooseAfterPerch();
           if (!next) this.#dismountFromPerch(body);
           return this.#finish({ next });
+        }
+        // Surface live : si l'ancre disparaît, ne pas rester en held/void.
+        if (this.#lastCtx && !isPerchAnchorValid(this.#lastCtx.world, goal.anchor, body.x)) {
+          this.#dismountFromPerch(body);
+          this.requestWake("perchSurfaceLost");
+          return this.#finish();
         }
         return { motion: { kind: "held", x: body.x, y: body.y } };
       }

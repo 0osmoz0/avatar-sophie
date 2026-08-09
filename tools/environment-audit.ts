@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_CONSIDERATIONS } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import { Memory } from "../src/behavior/Memory";
 import { Needs } from "../src/behavior/Needs";
 import type { Body } from "../src/motion/Body";
@@ -142,6 +143,7 @@ function makeCtx(partial?: {
     memory: new Memory(),
     world: baseWorld(partial?.world),
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: interpretRules(userActivity),
     stateId: partial?.stateId ?? "IDLE",
     idleSeconds: partial?.idleSeconds ?? 8,

@@ -7,6 +7,7 @@ import type { WorldSnapshot } from "../../world/types";
 import type { StateId } from "../../state/types";
 import type { InterpretedUserContext } from "../../user/InterpretedUserContext";
 import type { UserActivitySnapshot } from "../../user/UserActivitySnapshot";
+import type { EnvironmentContext } from "../../environment/EnvironmentContext";
 
 export interface BrainContext {
   now: number;
@@ -18,6 +19,8 @@ export interface BrainContext {
   userActivity: UserActivitySnapshot;
   /** Contexte interprété (règles ± Ollama) — modifiers only. */
   interpretedContext: InterpretedUserContext;
+  /** Conscience spatiale — lecture seule, jamais de Goal forcé. */
+  environment: EnvironmentContext;
   stateId: StateId;
   idleSeconds: number;
   hour: number;

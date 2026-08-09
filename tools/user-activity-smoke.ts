@@ -17,6 +17,7 @@ import {
   investigateWindow,
 } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
+import { emptyEnvironment } from "../src/environment/EnvironmentContext";
 import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
@@ -73,6 +74,7 @@ function mockCtx(
       nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
     }) as WorldSnapshot,
     userActivity,
+    environment: emptyEnvironment(),
     interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 10,

@@ -45,6 +45,10 @@
 
     "push": { "dir": "push", "fps": 12, "loop": true, "exclude": [32, 33, 34, 35] },
     "pull": { "dir": "pull", "fps": 12, "loop": true, "exclude": [] },
-    "drag": { "dir": "TakeHer", "fps": 10, "loop": true, "exclude": [] }
+    "drag": { "dir": "TakeHer", "fps": 10, "loop": true, "exclude": [] },
+
+    "phone_check": { "dir": "phone_check", "fps": 10, "loop": true, "exclude": [] },
+    "phone_text": { "dir": "phone_texting", "fps": 10, "loop": true, "exclude": [] },
+    "phone_call": { "dir": "phone_call", "fps": 10, "loop": true, "exclude": [] }
   }
 }
