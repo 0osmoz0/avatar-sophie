@@ -26,6 +26,7 @@ import {
   makeTestSnapshot,
 } from "../src/user/UserActivitySnapshot";
 import { userActivityFactor } from "../src/user/activityModifiers";
+import { interpretRules } from "../src/user/LocalContextInterpreter";
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`FAIL: ${msg}`);
@@ -37,6 +38,7 @@ function mockCtx(
 ): BrainContext {
   const needs = partial.needs ?? new Needs();
   const memory = partial.memory ?? new Memory();
+  const userActivity = partial.userActivity ?? emptyUserActivitySnapshot();
   return {
     now: partial.now ?? 1_000_000,
     body: (partial.body ?? { x: 600, y: 900 }) as Body,
@@ -70,7 +72,8 @@ function mockCtx(
       },
       nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
     }) as WorldSnapshot,
-    userActivity: partial.userActivity ?? emptyUserActivitySnapshot(),
+    userActivity,
+    interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 10,
     hour: partial.hour ?? 14,

@@ -20,6 +20,10 @@ import { WALK_SPEED, RUN_SPEED, type MotionIntent } from "../motion/Locomotion";
 import { EventBus } from "../core/EventBus";
 import { BrainDebug } from "./BrainDebug";
 import {
+  emptyInterpretedContext,
+  type InterpretedUserContext,
+} from "../user/InterpretedUserContext";
+import {
   emptyUserActivitySnapshot,
   type UserActivitySnapshot,
 } from "../user/UserActivitySnapshot";
@@ -123,6 +127,7 @@ export class BehaviorBrain {
     cursor: CursorTracker,
     world: WorldSnapshot,
     userActivity: UserActivitySnapshot = emptyUserActivitySnapshot(),
+    interpretedContext: InterpretedUserContext = emptyInterpretedContext(userActivity),
   ): BrainFrameResult {
     const stateId = this.#machine.currentId;
 
@@ -137,6 +142,7 @@ export class BehaviorBrain {
       memory: this.memory,
       world,
       userActivity,
+      interpretedContext,
       stateId,
       idleSeconds: this.#idleSince,
       hour: new Date().getHours(),
@@ -144,6 +150,7 @@ export class BehaviorBrain {
 
     if (BrainDebug.enabled()) {
       BrainDebug.userActivity(userActivity);
+      BrainDebug.context(interpretedContext);
     }
 
     if (stateId === "DRAG") {
@@ -172,6 +179,7 @@ export class BehaviorBrain {
           `idle decide@${Math.max(0, (this.#nextDecideAt - now) / 1000).toFixed(1)}s\n` +
             `e${Math.round(this.#needs.energy)} f${Math.round(this.#needs.fatigue)} ` +
             `b${Math.round(this.#needs.boredom)} c${Math.round(this.#needs.curiosity)}\n` +
+            `${BrainDebug.formatContextShort(interpretedContext)} ` +
             `${userActivity.category}/${userActivity.overallLevel}` +
             (userActivity.userBusy ? " busy" : userActivity.userIdle ? " idleUser" : ""),
         );
@@ -217,6 +225,15 @@ export class BehaviorBrain {
       return;
     }
 
+    if (BrainDebug.enabled()) {
+      for (const s of scored.slice(0, 6)) {
+        const nov = ctx.memory.noveltyModifier(s.c.id);
+        if (nov < 0.88 && s.c.id !== pick.c.id) {
+          BrainDebug.suppress(s.c.id, "recently_used", nov);
+        }
+      }
+    }
+
     const goal = pick.c.buildGoal(ctx);
     if (pick.c.onComplete) {
       goal.onComplete = { ...pick.c.onComplete, ...goal.onComplete };
@@ -234,6 +251,7 @@ export class BehaviorBrain {
       needs: this.#needs.snapshot(),
       stateId: ctx.stateId,
       idleSeconds: ctx.idleSeconds,
+      context: BrainDebug.formatContextShort(ctx.interpretedContext),
     });
     this.events.emit("decide", {
       pick: pick.c.id,
@@ -382,7 +400,7 @@ export class BehaviorBrain {
     const ctx = this.#lastCtx;
     if (!ctx || ctx.stateId === "DRAG") return undefined;
     const fallChance =
-      0.2 + (ctx.needs.boredom / 100) * 0.18 + (ctx.needs.curiosity / 100) * 0.12;
+      0.32 + (ctx.needs.boredom / 100) * 0.2 + (ctx.needs.curiosity / 100) * 0.15;
     if (Math.random() < fallChance) {
       return {
         kind: "fall",

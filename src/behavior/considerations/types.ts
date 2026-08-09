@@ -5,6 +5,7 @@ import type { Body } from "../../motion/Body";
 import type { CursorTracker } from "../../input/CursorTracker";
 import type { WorldSnapshot } from "../../world/types";
 import type { StateId } from "../../state/types";
+import type { InterpretedUserContext } from "../../user/InterpretedUserContext";
 import type { UserActivitySnapshot } from "../../user/UserActivitySnapshot";
 
 export interface BrainContext {
@@ -15,6 +16,8 @@ export interface BrainContext {
   memory: Memory;
   world: WorldSnapshot;
   userActivity: UserActivitySnapshot;
+  /** Contexte interprété (règles ± Ollama) — modifiers only. */
+  interpretedContext: InterpretedUserContext;
   stateId: StateId;
   idleSeconds: number;
   hour: number;

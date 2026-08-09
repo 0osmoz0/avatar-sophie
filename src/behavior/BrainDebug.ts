@@ -2,8 +2,11 @@
  * Debug cerveau : logs structurés + overlay optionnel.
  *
  * Activer via `localStorage.sophieDebugBrain = "1"` ou `Sophie.debugBrain = true`.
+ * Ollama : `localStorage.sophieUseOllama = "1"` ou `Sophie.useOllama = true`.
  */
 
+import type { InterpretedUserContext } from "../user/InterpretedUserContext";
+import { formatContextHint } from "../user/InterpretedUserContext";
 import type { UserActivitySnapshot } from "../user/UserActivitySnapshot";
 
 export interface DecisionLog {
@@ -14,14 +17,18 @@ export interface DecisionLog {
   needs: Record<string, number | string>;
   stateId: string;
   idleSeconds: number;
+  context?: string;
 }
 
 declare global {
   interface Window {
     Sophie?: {
       debugBrain?: boolean;
+      useOllama?: boolean;
+      ollamaModel?: string;
       lastDecision?: DecisionLog | null;
       lastUserActivity?: UserActivitySnapshot | null;
+      lastContext?: InterpretedUserContext | null;
     };
   }
 }
@@ -40,6 +47,7 @@ function flagEnabled(): boolean {
 
 let overlayEl: HTMLDivElement | null = null;
 let lastUserLine = "";
+let lastContextLine = "";
 
 function ensureOverlay(): HTMLDivElement | null {
   if (typeof document === "undefined") return null;
@@ -61,13 +69,17 @@ function ensureOverlay(): HTMLDivElement | null {
     "white-space:pre-wrap",
   ].join(";");
   document.body.appendChild(el);
-  overlayEl = el;
-  return el;
+  return (overlayEl = el);
 }
 
 function formatDuration(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}s`;
   return `${Math.round(sec / 60)}m`;
+}
+
+function patchSophie(partial: Partial<NonNullable<Window["Sophie"]>>): void {
+  if (typeof window === "undefined") return;
+  window.Sophie = { ...window.Sophie, ...partial };
 }
 
 export const BrainDebug = {
@@ -82,13 +94,7 @@ export const BrainDebug = {
   },
 
   userActivity(snap: UserActivitySnapshot): void {
-    if (typeof window !== "undefined") {
-      window.Sophie = {
-        ...window.Sophie,
-        lastUserActivity: snap,
-        debugBrain: window.Sophie?.debugBrain,
-      };
-    }
+    patchSophie({ lastUserActivity: snap });
     const line =
       `[UserActivity] app=${snap.activeApp ?? "none"} category=${snap.category} ` +
       `duration=${formatDuration(snap.activeAppDurationSec)} ` +
@@ -99,25 +105,36 @@ export const BrainDebug = {
     }
   },
 
-  decision(log: DecisionLog): void {
-    if (typeof window !== "undefined") {
-      window.Sophie = { ...window.Sophie, lastDecision: log, debugBrain: window.Sophie?.debugBrain };
+  context(ctx: InterpretedUserContext): void {
+    patchSophie({ lastContext: ctx });
+    const line =
+      `[Context] mode=${ctx.mode} conf=${ctx.confidence.toFixed(2)} source=${ctx.source} ` +
+      `disturb=${ctx.disturbanceTolerance} autonomy=${ctx.autonomyBias.toFixed(2)} ` +
+      `social=${ctx.socialOpenness.toFixed(2)} — ${ctx.summary}`;
+    if (line !== lastContextLine && flagEnabled()) {
+      lastContextLine = line;
+      console.log(line);
     }
+  },
+
+  decision(log: DecisionLog): void {
+    patchSophie({ lastDecision: log });
     if (!flagEnabled()) return;
     const top = log.top
       .slice(0, 3)
       .map((t) => `${t.id}=${t.u.toFixed(2)}`)
       .join(" ");
     const n = log.needs;
+    const ctxBit = log.context ? ` context=${log.context}` : "";
     console.log(
-      `[Brain] pick=${log.pick} util=${log.utility.toFixed(2)} reason=${log.reason}\n` +
+      `[Brain] pick=${log.pick} util=${log.utility.toFixed(2)} reason=${log.reason}${ctxBit}\n` +
         `Needs e=${n.e} f=${n.f} b=${n.b} c=${n.c} s=${n.s} mood=${n.mood}\n` +
         `top: ${top} | state=${log.stateId} idle=${log.idleSeconds.toFixed(1)}s`,
     );
     const el = ensureOverlay();
     if (el) {
       el.textContent =
-        `${lastUserLine.replace("[UserActivity] ", "")}\n` +
+        `${lastContextLine || lastUserLine}\n` +
         `pick ${log.pick} (${log.utility.toFixed(2)})\n` +
         `${log.reason}\n` +
         `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}`;
@@ -128,9 +145,20 @@ export const BrainDebug = {
     if (!flagEnabled()) return;
     const el = ensureOverlay();
     if (el) {
-      el.textContent = lastUserLine
-        ? `${lastUserLine.replace("[UserActivity] ", "")}\n${line}`
-        : line;
+      const head = lastContextLine || lastUserLine.replace("[UserActivity] ", "");
+      el.textContent = head ? `${head}\n${line}` : line;
     }
   },
+
+  suppress(id: string, reason: string, novelty?: number): void {
+    if (!flagEnabled()) return;
+    const nov = novelty != null ? ` novelty=${novelty.toFixed(2)}` : "";
+    console.log(`[Brain] suppress=${id} reason=${reason}${nov}`);
+  },
+
+  formatContextShort(ctx: InterpretedUserContext): string {
+    return `${ctx.mode}/${ctx.disturbanceTolerance}`;
+  },
+
+  formatContextHint,
 };

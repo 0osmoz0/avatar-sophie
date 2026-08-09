@@ -20,6 +20,7 @@ import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
 import type { Goal } from "../src/behavior/Goal";
 import { emptyUserActivitySnapshot } from "../src/user/UserActivitySnapshot";
+import { interpretRules } from "../src/user/LocalContextInterpreter";
 
 function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContext {
   const memory = partial.memory ?? new Memory();
@@ -43,6 +44,7 @@ function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContex
     nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
   }) as WorldSnapshot;
 
+  const userActivity = partial.userActivity ?? emptyUserActivitySnapshot();
   return {
     now: partial.now ?? 1_000_000,
     body: (partial.body ?? { x: 600, y: 900 }) as Body,
@@ -56,7 +58,8 @@ function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContex
     needs: partial.needs,
     memory,
     world,
-    userActivity: partial.userActivity ?? emptyUserActivitySnapshot(),
+    userActivity,
+    interpretedContext: partial.interpretedContext ?? interpretRules(userActivity),
     stateId: partial.stateId ?? "IDLE",
     idleSeconds: partial.idleSeconds ?? 12,
     hour: partial.hour ?? 14,
@@ -92,9 +95,32 @@ playful.fatigue = 15;
 playful.energy = 70;
 playful.boredom = 75;
 playful.curiosity = 80;
-const ctxPlay = mockCtx({ needs: playful, idleSeconds: 10 });
-assert(walkSomewhere.utility(ctxPlay) > 0.4, "WALK prioritaire si boredom↑");
+const ctxPlay = mockCtx({
+  needs: playful,
+  idleSeconds: 10,
+  world: {
+    originX: 0,
+    originY: 0,
+    width: 1400,
+    height: 900,
+    scaleFactor: 2,
+    monitors: [],
+    windows: [],
+    points: [{ kind: "floor", x: 400, y: 900 }],
+    nearestWindow: {
+      id: 1,
+      title: "Test",
+      x: 500,
+      y: 100,
+      width: 400,
+      height: 300,
+    },
+    nearestEdge: { x: 20, y: 200, facing: 1 as const, kind: "screen" },
+  } as WorldSnapshot,
+});
+assert(walkSomewhere.utility(ctxPlay) > 0.25, "WALK compétitif si boredom↑");
 assert(investigateWindow.utility(ctxPlay) > 0.2, "WINDOW possible si curiosity↑ + fenêtre");
+assert(dance.utility(ctxPlay) > 0.6, "DANCE fort si boredom↑ energy OK");
 assert(sleep.utility(ctxPlay) === 0, "SLEEP inéligible si peu fatiguée de jour");
 
 const afterSleep = new Needs();

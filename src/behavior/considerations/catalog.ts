@@ -6,10 +6,6 @@ import type { StateId } from "../../state/types";
 import { userActivityFactor, userHint, withUserContext } from "../../user/activityModifiers";
 import { WALK_SPEED } from "../../motion/Locomotion";
 
-function pen(ctx: BrainContext, id: string): number {
-  return 1 - ctx.memory.recencyPenalty(id) * 0.85;
-}
-
 function ready(ctx: BrainContext, id: string): boolean {
   return ctx.memory.ready(id, ctx.now);
 }
@@ -25,14 +21,19 @@ function windowHorizDist(ctx: BrainContext): number | null {
   return Math.abs(cx - ctx.body.x);
 }
 
-
-/** Applique le contexte user après Needs/Memory (jamais de bypass cooldown). */
-function ctxScore(ctx: BrainContext, id: string, base: number): number {
-  return withUserContext(base, userActivityFactor(id, ctx));
+function novelty(ctx: BrainContext, id: string): number {
+  return ctx.memory.noveltyModifier(id);
 }
 
-function withUserReason(base: string, ctx: BrainContext): string {
-  return `${base} ${userHint(ctx)}`;
+/** final = base × novelty × contextModifier — Needs/Memory déjà dans base (ready→0). */
+function ctxScore(ctx: BrainContext, id: string, base: number): number {
+  if (base <= 0) return 0;
+  return withUserContext(base * novelty(ctx, id), userActivityFactor(id, ctx));
+}
+
+function withUserReason(base: string, ctx: BrainContext, id?: string): string {
+  const nov = id ? ` novelty=${ctx.memory.noveltyLabel(id)}` : "";
+  return `${base}${nov} ${userHint(ctx)}`;
 }
 
 /** Gates de chaîne — revalidés au moment d'activer l'étape. */
@@ -55,20 +56,31 @@ const gates = {
   boredomWalk: (ctx: BrainContext) => ctx.needs.boredom >= 25 || ctx.idleSeconds > 4,
 };
 
+function mealBand(hour: number): boolean {
+  // Fenêtres de repas réalistes (pas toute l'après-midi).
+  return (
+    (hour >= 7 && hour <= 9) ||
+    hour === 12 ||
+    hour === 13 ||
+    (hour >= 19 && hour <= 20)
+  );
+}
+
 export const idleHere: Consideration = {
   id: "idle",
   priority: 0,
-  cooldownMs: 10_000,
+  cooldownMs: 14_000,
   reason: (ctx) =>
     withUserReason(
       `calm pause boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s`,
       ctx,
+      "idle",
     ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const calm = (100 - ctx.needs.boredom) / 100;
-    const base = ctx.idleSeconds < 2 ? 0.35 : 0.22 + calm * 0.35;
-    return ctxScore(ctx, this.id, base * pen(ctx, this.id));
+    const base = ctx.idleSeconds < 2 ? 0.3 : 0.2 + calm * 0.32;
+    return ctxScore(ctx, this.id, base);
   },
   buildGoal: () => ({
     kind: "idle",
@@ -80,18 +92,20 @@ export const idleHere: Consideration = {
 export const walkSomewhere: Consideration = {
   id: "walk",
   priority: 1,
-  cooldownMs: 14_000,
+  cooldownMs: 26_000,
   reason: (ctx) =>
     withUserReason(
       `boredom=${ctx.needs.boredom.toFixed(0)} idle=${ctx.idleSeconds.toFixed(1)}s explore`,
       ctx,
+      "walk",
     ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const restlessness = n01(ctx.needs.boredom);
-    const settled = ctx.idleSeconds > 8 ? 0.35 : ctx.idleSeconds > 4 ? 0.15 : 0;
-    let base = (0.18 + restlessness * 0.75 + settled) * pen(ctx, this.id);
-    // Si une fenêtre vraiment proche (en X — Sophie marche horizontalement).
+    // Walk utile surtout si vraiment restive — sinon think/look/idle peuvent gagner.
+    const settled = ctx.idleSeconds > 10 ? 0.18 : ctx.idleSeconds > 6 ? 0.08 : 0;
+    let base = 0.06 + restlessness * 0.48 + settled;
+    if (ctx.needs.boredom < 35) base *= 0.7;
     const dx = windowHorizDist(ctx);
     if (
       dx != null &&
@@ -131,13 +145,13 @@ export const lookAround: Consideration = {
   priority: 1,
   cooldownMs: 22_000,
   reason: (ctx) =>
-    withUserReason(`curiosity=${ctx.needs.curiosity.toFixed(0)} glance`, ctx),
+    withUserReason(`curiosity=${ctx.needs.curiosity.toFixed(0)} glance`, ctx, "look"),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     return ctxScore(
       ctx,
       this.id,
-      (0.12 + n01(ctx.needs.curiosity) * 0.45 + n01(ctx.needs.boredom) * 0.15) * pen(ctx, this.id),
+      0.12 + n01(ctx.needs.curiosity) * 0.42 + n01(ctx.needs.boredom) * 0.12,
     );
   },
   onComplete: { curiosity: -6, boredom: -4 },
@@ -159,11 +173,10 @@ function activity(opts: {
     cooldownMs: opts.cooldownMs,
     priority: opts.priority ?? 0,
     onComplete: opts.onComplete,
-    reason: (ctx) => withUserReason(opts.reason(ctx), ctx),
+    reason: (ctx) => withUserReason(opts.reason(ctx), ctx, opts.id),
     utility(ctx) {
       if (!ready(ctx, opts.id)) return 0;
-      const base = Math.max(0, opts.score(ctx)) * pen(ctx, opts.id);
-      return ctxScore(ctx, opts.id, base);
+      return ctxScore(ctx, opts.id, Math.max(0, opts.score(ctx)));
     },
     buildGoal(ctx) {
       const goal: Goal = {
@@ -177,11 +190,11 @@ function activity(opts: {
   };
 }
 
-/** WORK → YAWN? → COFFEE? — chaque étape revalidée. */
+/** WORK → YAWN? → COFFEE? — chaque étape revalidée (jamais obligatoire). */
 export const work = activity({
   id: "work",
   state: "WORK",
-  cooldownMs: 140_000,
+  cooldownMs: 120_000,
   priority: 2,
   reason: (ctx) =>
     `mood=${ctx.needs.mood} fatigue=${ctx.needs.fatigue.toFixed(0)} focus block`,
@@ -190,9 +203,9 @@ export const work = activity({
     if (ctx.needs.exhausted) return 0;
     if (ctx.needs.energy < 25) return 0;
     return (
-      0.18 +
-      (ctx.needs.mood === "focused" ? 0.5 : 0.12) +
-      n01(ctx.needs.boredom) * 0.25 +
+      0.2 +
+      (ctx.needs.mood === "focused" ? 0.48 : 0.14) +
+      n01(ctx.needs.boredom) * 0.22 +
       (1 - n01(ctx.needs.fatigue)) * 0.15
     );
   },
@@ -216,13 +229,13 @@ export const work = activity({
 export const study = activity({
   id: "study",
   state: "STUDY",
-  cooldownMs: 160_000,
+  cooldownMs: 140_000,
   priority: 1,
   reason: (ctx) => `curiosity=${ctx.needs.curiosity.toFixed(0)} study`,
   score: (ctx) => {
     if (ctx.hour < 8 || ctx.hour > 22) return 0;
     if (ctx.needs.exhausted) return 0;
-    return 0.12 + n01(ctx.needs.curiosity) * 0.4;
+    return 0.16 + n01(ctx.needs.curiosity) * 0.48;
   },
   onComplete: { curiosity: -10, boredom: -6 },
 });
@@ -230,16 +243,20 @@ export const study = activity({
 export const coffee = activity({
   id: "coffee",
   state: "COFFEE",
-  cooldownMs: 240_000,
+  cooldownMs: 220_000,
   priority: 3,
   reason: (ctx) =>
-    `tired=${ctx.needs.tired} energy=${ctx.needs.energy.toFixed(0)} caffeine`,
+    `tired=${ctx.needs.tired} fatigue=${ctx.needs.fatigue.toFixed(0)} energy=${ctx.needs.energy.toFixed(0)} caffeine`,
   score: (ctx) => {
-    if (!ctx.needs.tired && ctx.needs.fatigue < 45) return 0;
+    const fatigued = ctx.needs.tired || ctx.needs.fatigue >= 42 || ctx.needs.energy <= 40;
+    if (!fatigued) return 0;
     if (ctx.hour >= 7 && ctx.hour <= 11) {
-      return 0.28 + (ctx.needs.tired ? 0.45 : 0.15);
+      return 0.38 + (ctx.needs.tired ? 0.4 : 0.22) + n01(ctx.needs.fatigue) * 0.2;
     }
-    return ctx.needs.tired ? 0.32 : 0;
+    if (ctx.needs.tired || ctx.needs.fatigue >= 55) {
+      return 0.34 + n01(ctx.needs.fatigue) * 0.28;
+    }
+    return 0.22 + n01(ctx.needs.fatigue) * 0.2;
   },
   onComplete: { energy: 10, fatigue: -12 },
 });
@@ -247,12 +264,16 @@ export const coffee = activity({
 export const eat = activity({
   id: "eat",
   state: "EAT",
-  cooldownMs: 220_000,
+  cooldownMs: 180_000,
   priority: 2,
-  reason: (ctx) => `hour=${ctx.hour} mealtime`,
+  reason: (ctx) =>
+    `hour=${ctx.hour} energy=${ctx.needs.energy.toFixed(0)} mealtime`,
   score: (ctx) => {
-    if (![8, 12, 13, 19, 20].includes(ctx.hour)) return 0;
-    return 0.28 + n01(100 - ctx.needs.energy) * 0.2;
+    if (!mealBand(ctx.hour)) return 0;
+    if (ctx.needs.exhausted) return 0;
+    const hunger = n01(100 - ctx.needs.energy);
+    // Heures de repas + énergie basse/modérée → peut battre walk/look.
+    return 0.34 + hunger * 0.42 + (ctx.needs.energy < 55 ? 0.18 : 0.06);
   },
   onComplete: { energy: 12, boredom: -5 },
 });
@@ -260,25 +281,31 @@ export const eat = activity({
 export const think = activity({
   id: "think",
   state: "THINK",
-  cooldownMs: 70_000,
+  cooldownMs: 55_000,
   priority: 0,
   reason: (ctx) => `curiosity=${ctx.needs.curiosity.toFixed(0)} ponder`,
-  score: (ctx) => 0.1 + n01(ctx.needs.curiosity) * 0.28,
+  score: (ctx) => 0.16 + n01(ctx.needs.curiosity) * 0.36 + n01(ctx.needs.boredom) * 0.08,
   onComplete: { curiosity: -4 },
 });
 
 export const dance = activity({
   id: "dance",
   state: "DANCE",
-  cooldownMs: 420_000,
-  priority: 1,
+  cooldownMs: 280_000,
+  priority: 2,
   reason: (ctx) =>
     `boredom=${ctx.needs.boredom.toFixed(0)} energy=${ctx.needs.energy.toFixed(0)} dance`,
   score: (ctx) => {
-    if (ctx.needs.boredom < 55) return 0;
+    if (ctx.needs.boredom < 48) return 0;
     if (ctx.needs.energy < 35) return 0;
-    if (ctx.memory.recentlyDid("dance", 5)) return 0;
-    return 0.08 + n01(ctx.needs.boredom) * 0.55 + n01(ctx.needs.energy) * 0.15;
+    // Cooldown Memory suffit — pas de double-blocage recentlyDid agressif.
+    if (ctx.memory.recentlyDid("dance", 2)) return 0;
+    return (
+      0.24 +
+      n01(ctx.needs.boredom) * 0.7 +
+      n01(ctx.needs.energy) * 0.22 +
+      (ctx.needs.restless ? 0.12 : 0)
+    );
   },
   onComplete: { boredom: -22, energy: -8, social: 6 },
 });
@@ -286,22 +313,22 @@ export const dance = activity({
 export const sleep = activity({
   id: "sleep",
   state: "SLEEP",
-  cooldownMs: 320_000,
+  cooldownMs: 280_000,
   priority: 5,
   reason: (ctx) =>
     `fatigue=${ctx.needs.fatigue.toFixed(0)} energy=${ctx.needs.energy.toFixed(0)} hour=${ctx.hour}`,
   score: (ctx) => {
-    // Memory / Needs prioritaires : cooldown et recentlyDid bloquent même si coding 2h.
     if (!ready(ctx, "sleep")) return 0;
-    if (ctx.memory.recentlyDid("sleep", 4)) return 0;
-    const night = ctx.hour >= 23 || ctx.hour < 6;
-    if (!(ctx.needs.tired || ctx.needs.exhausted || night)) return 0;
-    if (ctx.needs.fatigue < 40 && ctx.needs.energy > 50 && !night) return 0;
+    if (ctx.memory.recentlyDid("sleep", 3)) return 0;
+    const night = ctx.hour >= 22 || ctx.hour < 7;
+    const veryTired = ctx.needs.tired || ctx.needs.exhausted || ctx.needs.fatigue >= 70;
+    if (!(veryTired || night)) return 0;
+    if (ctx.needs.fatigue < 38 && ctx.needs.energy > 55 && !night) return 0;
     return (
-      0.45 +
-      (ctx.needs.exhausted ? 0.55 : n01(ctx.needs.fatigue) * 0.45) +
-      (1 - n01(ctx.needs.energy)) * 0.25 +
-      (night ? 0.2 : 0)
+      0.55 +
+      (ctx.needs.exhausted ? 0.6 : n01(ctx.needs.fatigue) * 0.5) +
+      (1 - n01(ctx.needs.energy)) * 0.3 +
+      (night ? 0.25 : 0)
     );
   },
   onComplete: { energy: 25, fatigue: -30, boredom: -8 },
@@ -310,39 +337,39 @@ export const sleep = activity({
 export const yawn = activity({
   id: "yawn",
   state: "YAWN",
-  cooldownMs: 100_000,
+  cooldownMs: 85_000,
   priority: 4,
   reason: (ctx) => `fatigue=${ctx.needs.fatigue.toFixed(0)} tired yawn`,
   score: (ctx) => {
-    if (!ctx.needs.tired && !(ctx.hour >= 22 || ctx.hour < 7)) return 0;
-    if (ctx.memory.recentlyDid("sleep", 3)) return 0;
-    return 0.3 + n01(ctx.needs.fatigue) * 0.4;
+    const late = ctx.hour >= 21 || ctx.hour < 7;
+    if (!ctx.needs.tired && ctx.needs.fatigue < 48 && !late) return 0;
+    if (ctx.memory.recentlyDid("sleep", 2)) return 0;
+    return 0.34 + n01(ctx.needs.fatigue) * 0.45 + (late ? 0.12 : 0);
   },
 });
 
 export const perchEdge: Consideration = {
   id: "perch",
   priority: 2,
-  cooldownMs: 260_000,
+  cooldownMs: 200_000,
   reason: (ctx) =>
     withUserReason(
       `curiosity=${ctx.needs.curiosity.toFixed(0)} edge=${ctx.world.nearestEdge ? "yes" : "no"}`,
       ctx,
+      "perch",
     ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (!ctx.world.nearestEdge) return 0;
-    if (ctx.needs.curiosity < 40) return 0;
+    if (ctx.needs.curiosity < 35) return 0;
     const edge = ctx.world.nearestEdge;
     const dist = Math.abs(edge.x - ctx.body.x);
-    // Bords inatteignables raisonnablement : utility ↓ (évite picks morts).
     const reach = Math.max(0, 1 - dist / 2400);
     return ctxScore(
       ctx,
       this.id,
-      (0.08 + n01(ctx.needs.curiosity) * 0.55 + n01(ctx.needs.boredom) * 0.15) *
-        (0.35 + 0.65 * reach) *
-        pen(ctx, this.id),
+      (0.14 + n01(ctx.needs.curiosity) * 0.58 + n01(ctx.needs.boredom) * 0.18) *
+        (0.4 + 0.6 * reach),
     );
   },
   onComplete: { curiosity: -14, boredom: -10 },
@@ -366,7 +393,6 @@ export const perchEdge: Consideration = {
         duration: 5 + Math.random() * 6,
         label: "perch",
         gate: (c) => gates.edgeStillNear(c) && gates.curiosityOk(c) && gates.notInterrupted(c),
-        // Pas de FALL systématique : le Brain choisit à la fin du perch.
       },
     };
   },
@@ -375,33 +401,36 @@ export const perchEdge: Consideration = {
 export const investigateWindow: Consideration = {
   id: "window",
   priority: 3,
-  cooldownMs: 100_000,
+  cooldownMs: 90_000,
   reason: (ctx) => {
     const w = ctx.world.nearestWindow;
     return withUserReason(
       `curiosity=${ctx.needs.curiosity.toFixed(0)} window=${w ? "near" : "none"}`,
       ctx,
+      "window",
     );
   },
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const w = ctx.world.nearestWindow;
     if (!w) return 0;
-    if (ctx.needs.curiosity < 45 && ctx.needs.boredom < 50) return 0;
-    // Distance horizontale : c'est l'axe de déplacement réel.
+    if (ctx.needs.curiosity < 40 && ctx.needs.boredom < 45) return 0;
     const dist = windowHorizDist(ctx);
     if (dist == null || dist > 700) return 0;
     const proximity = Math.max(0, 1 - dist / 700);
     const interest =
-      0.42 + n01(ctx.needs.curiosity) * 0.65 + n01(ctx.needs.boredom) * 0.45;
-    const spatial = 0.2 + 1.4 * proximity * proximity;
-    return ctxScore(ctx, this.id, interest * spatial * pen(ctx, this.id));
+      0.45 + n01(ctx.needs.curiosity) * 0.65 + n01(ctx.needs.boredom) * 0.45;
+    const spatial = 0.22 + 1.45 * proximity * proximity;
+    return ctxScore(ctx, this.id, interest * spatial);
   },
   onComplete: { curiosity: -12, boredom: -8 },
   buildGoal(ctx) {
     const w = ctx.world.nearestWindow!;
     const side = ctx.body.x < w.x + w.width / 2 ? w.x + 24 : w.x + w.width - 24;
-    const mime: StateId = Math.random() < 0.5 ? "PUSH" : "PULL";
+    // Contexte : plus curieuse → PUSH ; plus enjouée → PULL (pas 50/50 forcé).
+    const pushBias =
+      0.35 + n01(ctx.needs.curiosity) * 0.35 - n01(ctx.needs.boredom) * 0.15;
+    const mime: StateId = Math.random() < pushBias ? "PUSH" : "PULL";
     const dist = Math.abs(side - ctx.body.x);
     return {
       kind: "goTo",
@@ -433,13 +462,14 @@ export const investigateWindow: Consideration = {
 export const reactCursor: Consideration = {
   id: "cursor",
   priority: 2,
-  cooldownMs: 75_000,
+  cooldownMs: 70_000,
   reason: (ctx) =>
     withUserReason(
       `social=${ctx.needs.social.toFixed(0)} cursorDist≈${Math.round(
         ctx.cursor.distanceTo(ctx.body.x, ctx.body.y - 80),
       )}`,
       ctx,
+      "cursor",
     ),
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
@@ -447,12 +477,13 @@ export const reactCursor: Consideration = {
     const headY = ctx.body.y - 80;
     const dist = ctx.cursor.distanceTo(ctx.body.x, headY);
     if (dist > 380) return 0;
-    if (Math.random() < 0.7) return 0;
+    // Moins de rejet aléatoire — toujours rare via score bas + cooldown.
+    if (Math.random() < 0.55) return 0;
     const social = n01(ctx.needs.social);
     const curious = n01(ctx.needs.curiosity);
     const base = !ctx.cursor.moving
-      ? (0.04 + social * 0.08) * pen(ctx, this.id)
-      : (0.06 + curious * 0.22 + social * 0.1) * (1 - dist / 400) * pen(ctx, this.id);
+      ? 0.06 + social * 0.12
+      : (0.1 + curious * 0.28 + social * 0.14) * (1 - dist / 400);
     return ctxScore(ctx, this.id, base);
   },
   buildGoal(ctx) {

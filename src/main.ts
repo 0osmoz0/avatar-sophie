@@ -26,6 +26,7 @@ import {
 import { CanvasRenderer } from "./render/CanvasRenderer";
 import { StateMachine } from "./state/StateMachine";
 import { createAllStates, IdleState } from "./state/states";
+import { LocalContextInterpreter } from "./user/LocalContextInterpreter";
 import { UserActivityModel } from "./user/UserActivityModel";
 import { WorldModel } from "./world/WorldModel";
 
@@ -81,13 +82,16 @@ async function bootstrap(): Promise<void> {
   const brain = new BehaviorBrain(machine, needs);
   const userActivity = new UserActivityModel();
   await userActivity.start();
+  const contextInterpreter = new LocalContextInterpreter();
 
-  // Debug cerveau : localStorage.sophieDebugBrain = "1" ou Sophie.debugBrain = true
+  // Debug : localStorage.sophieDebugBrain / sophieUseOllama = "1"
   window.Sophie = {
     ...window.Sophie,
     debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
+    useOllama: window.Sophie?.useOllama ?? localStorage.getItem("sophieUseOllama") === "1",
     lastDecision: null,
     lastUserActivity: null,
+    lastContext: null,
   };
 
   const renderer = new CanvasRenderer(canvas);
@@ -154,12 +158,14 @@ async function bootstrap(): Promise<void> {
       });
 
       const activity = userActivity.update(now, cursor);
-      for (const signal of userActivity.drainSignals()) {
+      const signals = userActivity.drainSignals();
+      for (const signal of signals) {
         // Wake soft uniquement — jamais de goal spatial vers l'app active.
         brain.notifyUserActivity(signal);
       }
+      const interpreted = contextInterpreter.update(activity, signals);
 
-      const decision = brain.update(now, dt, body, cursor, snap, activity);
+      const decision = brain.update(now, dt, body, cursor, snap, activity, interpreted);
       if (decision.requestState) {
         machine.request(decision.requestState, decision.forceState ?? false);
       }

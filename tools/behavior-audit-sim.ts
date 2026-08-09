@@ -11,6 +11,7 @@ import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
 import { makeTestSnapshot } from "../src/user/UserActivitySnapshot";
+import { interpretRules } from "../src/user/LocalContextInterpreter";
 import { goToTimeoutSec, type Goal } from "../src/behavior/Goal";
 import { WALK_SPEED } from "../src/motion/Locomotion";
 
@@ -86,6 +87,15 @@ function ctxOf(opts: {
       x: edgeX,
     };
   }
+  const user =
+    opts.user ??
+    makeTestSnapshot({
+      category: "unknown",
+      overallActivity: 0.2,
+      userBusy: false,
+      userIdle: false,
+      secondsSinceLastInput: 30,
+    });
   return {
     now: opts.now ?? 1_000_000,
     body: { x: bodyX, y: 900 } as Body,
@@ -101,18 +111,11 @@ function ctxOf(opts: {
     needs: opts.needs,
     memory: opts.memory ?? new Memory(),
     world,
-    userActivity:
-      opts.user ??
-      makeTestSnapshot({
-        category: "unknown",
-        overallActivity: 0.2,
-        userBusy: false,
-        userIdle: false,
-        secondsSinceLastInput: 30,
-      }),
+    userActivity: user,
+    interpretedContext: interpretRules(user),
     stateId: "IDLE",
     idleSeconds: opts.idleSeconds ?? 10,
-    hour: opts.hour ?? 14,
+    hour: opts.hour ?? 15, // défaut hors repas pour ne pas gonfler EAT
   };
 }
 
@@ -265,90 +268,138 @@ function scoreNear(): void {
   );
 }
 
+const N_PER_PROFILE = 400;
+
 const results = [
-  simulateProfile("A inactif / énergique", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 85, fatigue: 15, boredom: 40, curiosity: 55 }),
-      idleSeconds: 12,
-      user: makeTestSnapshot({
-        userIdle: true,
-        secondsSinceLastInput: 400,
-        overallActivity: 0.05,
-        category: "browser",
+  simulateProfile(
+    "A inactif / énergique",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 85, fatigue: 15, boredom: 40, curiosity: 55 }),
+        idleSeconds: 12,
+        user: makeTestSnapshot({
+          userIdle: true,
+          secondsSinceLastInput: 400,
+          overallActivity: 0.05,
+          category: "browser",
+        }),
       }),
-    }),
+    N_PER_PROFILE,
   ),
-  simulateProfile("B fatiguée", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 22, fatigue: 78, boredom: 25, curiosity: 40 }),
-      hour: 23,
-    }),
-  ),
-  simulateProfile("C ennuyée", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 65, fatigue: 25, boredom: 82, curiosity: 60 }),
-      idleSeconds: 15,
-    }),
-  ),
-  simulateProfile("D coding long", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 55, fatigue: 48, boredom: 40, curiosity: 45 }),
-      hour: 11,
-      user: makeTestSnapshot({
-        category: "coding",
-        activeAppDurationSec: 50 * 60,
-        overallActivity: 0.85,
-        userBusy: true,
-        secondsSinceLastInput: 2,
+  simulateProfile(
+    "B fatiguée",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 22, fatigue: 78, boredom: 25, curiosity: 40 }),
+        hour: 23,
       }),
-    }),
+    N_PER_PROFILE,
   ),
-  simulateProfile("E fenêtre PROCHE", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 55, curiosity: 75 }),
-      window: true,
-      windowDist: 100,
-      bodyX: 600,
-    }),
-  ),
-  simulateProfile("E2 fenêtre LOIN", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 55, curiosity: 75 }),
-      window: true,
-      windowDist: 600,
-      bodyX: 600,
-    }),
-  ),
-  simulateProfile("F bord proche", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 50, curiosity: 80 }),
-      edge: true,
-      edgeOffset: 40,
-      bodyX: 600,
-    }),
-  ),
-  simulateProfile("F2 bord LOIN (1800px)", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 50, curiosity: 80 }),
-      edge: true,
-      edgeOffset: 1800,
-      bodyX: 600,
-    }),
-  ),
-  simulateProfile("G sans interaction + edge+fenêtre proches", () =>
-    ctxOf({
-      needs: makeNeeds({ energy: 75, fatigue: 18, boredom: 70, curiosity: 65 }),
-      idleSeconds: 25,
-      window: true,
-      windowDist: 120,
-      edge: true,
-      edgeOffset: 50,
-      user: makeTestSnapshot({
-        userIdle: true,
-        secondsSinceLastInput: 600,
-        overallActivity: 0,
+  simulateProfile(
+    "C ennuyée",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 65, fatigue: 25, boredom: 82, curiosity: 60 }),
+        idleSeconds: 15,
       }),
-    }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "D coding long",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 55, fatigue: 48, boredom: 40, curiosity: 45 }),
+        hour: 11,
+        user: makeTestSnapshot({
+          category: "coding",
+          activeAppDurationSec: 50 * 60,
+          overallActivity: 0.85,
+          userBusy: true,
+          secondsSinceLastInput: 2,
+        }),
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "D2 repas midi",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 45, fatigue: 30, boredom: 35, curiosity: 50 }),
+        hour: 12,
+        idleSeconds: 8,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "D3 fatigue modérée après-midi",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 38, fatigue: 52, boredom: 45, curiosity: 48 }),
+        hour: 15,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "E fenêtre PROCHE",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 55, curiosity: 75 }),
+        window: true,
+        windowDist: 100,
+        bodyX: 600,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "E2 fenêtre LOIN",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 55, curiosity: 75 }),
+        window: true,
+        windowDist: 600,
+        bodyX: 600,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "F bord proche",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 50, curiosity: 80 }),
+        edge: true,
+        edgeOffset: 40,
+        bodyX: 600,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "F2 bord LOIN (1800px)",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 50, curiosity: 80 }),
+        edge: true,
+        edgeOffset: 1800,
+        bodyX: 600,
+      }),
+    N_PER_PROFILE,
+  ),
+  simulateProfile(
+    "G sans interaction + edge+fenêtre proches",
+    () =>
+      ctxOf({
+        needs: makeNeeds({ energy: 75, fatigue: 18, boredom: 70, curiosity: 65 }),
+        idleSeconds: 25,
+        window: true,
+        windowDist: 120,
+        edge: true,
+        edgeOffset: 50,
+        user: makeTestSnapshot({
+          userIdle: true,
+          secondsSinceLastInput: 600,
+          overallActivity: 0,
+        }),
+      }),
+    N_PER_PROFILE,
   ),
 ];
 
@@ -369,3 +420,53 @@ console.log(`  perch→HANG: ${hangOk} OK / ${hangFail} fail (${hangOk + hangFai
 console.log(`  window→mime: ${winOk} OK / ${winFail} fail (${winOk + winFail} picks)`);
 
 scoreNear();
+
+/** Audit de rejet : pourquoi une consideration est filtrée. */
+function rejectAudit(): void {
+  console.log("\n=== Rejet / préconditions (échantillon) ===");
+  const samples: Array<{ name: string; ctx: BrainContext }> = [
+    {
+      name: "midi énergie basse",
+      ctx: ctxOf({
+        needs: makeNeeds({ energy: 40, fatigue: 30, boredom: 40, curiosity: 50 }),
+        hour: 12,
+      }),
+    },
+    {
+      name: "ennui fort",
+      ctx: ctxOf({
+        needs: makeNeeds({ energy: 70, fatigue: 20, boredom: 85, curiosity: 55 }),
+        idleSeconds: 12,
+      }),
+    },
+    {
+      name: "nuit épuisée",
+      ctx: ctxOf({
+        needs: makeNeeds({ energy: 15, fatigue: 90, boredom: 30, curiosity: 35 }),
+        hour: 23,
+      }),
+    },
+  ];
+  for (const s of samples) {
+    console.log(`\n-- ${s.name} --`);
+    for (const c of ALL_CONSIDERATIONS) {
+      const u = c.utility(s.ctx);
+      const why =
+        u <= 0
+          ? !s.ctx.memory.ready(c.id, s.ctx.now)
+            ? "cooldown"
+            : "précondition/Needs"
+          : `u=${u.toFixed(2)}`;
+      if (u > 0.05 || ["eat", "dance", "sleep", "coffee", "yawn", "perch", "window"].includes(c.id)) {
+        console.log(`  ${c.id.padEnd(10)} ${why}`);
+      }
+    }
+  }
+}
+
+rejectAudit();
+
+console.log(`\n### Référence AVANT (audit 1800 picks, 9 profils) ###`);
+console.log(`walk 26.9% | look 16.9% | idle 13.1% | work 11.6% | study 9.4% | think 8.5%`);
+console.log(`window 4.7% | perch 2.3% | dance 2.2% | yawn 1.8% | coffee 1.7% | sleep 0.7% | eat 0%`);
+
