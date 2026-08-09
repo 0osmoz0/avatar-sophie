@@ -81,13 +81,17 @@ export class Memory {
   }
 
   /**
-   * Novelty soft 0.75..1 — jamais assez fort pour battre un vrai besoin
-   * (ex. sleep 1.8 × 0.75 reste > dance 0.7).
+   * Novelty soft — jamais assez fort pour mettre une utilité à 0.
+   * idle/walk/look : poids ~0.50, plancher ≈ 0.65 (cible 0.65–0.85 si récent).
+   * Autres : poids ~0.28 (léger), plancher ≈ 0.75.
    */
   noveltyModifier(actionId: string): number {
     const pen = this.recencyPenalty(actionId);
-    const weight = actionId === "walk" || actionId === "look" || actionId === "idle" ? 0.35 : 0.25;
-    return 1 - pen * weight;
+    const strong =
+      actionId === "walk" || actionId === "look" || actionId === "idle";
+    const weight = strong ? 0.5 : 0.28;
+    const raw = 1 - pen * weight;
+    return Math.max(strong ? 0.65 : 0.75, raw);
   }
 
   noveltyLabel(actionId: string): "high" | "ok" | "low" {
@@ -101,10 +105,22 @@ export class Memory {
     return this.#events[this.#events.length - 1]?.label ?? null;
   }
 
+  /** Alias debug / chaînes — dernier comportement mémorisé. */
+  lastBehavior(): string | null {
+    return this.last();
+  }
+
+  /**
+   * Derniers n labels, du plus ancien au plus récent.
+   * Ex. recentChain(2) → ["walk","look"] puis évaluation de walk = oscillation.
+   */
+  recentChain(n: number): string[] {
+    if (n <= 0) return [];
+    return this.#events.slice(-n).map((e) => e.label);
+  }
+
   recentlyDid(actionId: string, within = 3): boolean {
-    return this.#events
-      .slice(-within)
-      .some((e) => e.label === actionId);
+    return this.#events.slice(-within).some((e) => e.label === actionId);
   }
 
   notePositive(amount = 0.35): void {

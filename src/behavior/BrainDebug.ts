@@ -19,6 +19,10 @@ export interface DecisionLog {
   stateId: string;
   idleSeconds: number;
   context?: string;
+  previous?: string | null;
+  novelty?: string;
+  noveltyValue?: number;
+  chain?: string;
 }
 
 export type AnimSource = "brain" | "user" | "physics" | "chain" | "boot";
@@ -34,6 +38,7 @@ declare global {
   interface Window {
     Sophie?: {
       debugBrain?: boolean;
+      debugRuntime?: boolean;
       useOllama?: boolean;
       ollamaModel?: string;
       lastDecision?: DecisionLog | null;
@@ -42,6 +47,8 @@ declare global {
       /** Compteurs de clips réellement joués (changements uniquement). */
       animationCounts?: Record<string, number>;
       lastAnim?: AnimChangeLog | null;
+      runtimeReport?: import("./RuntimeAudit").RuntimeReport | null;
+      runtimeAudit?: typeof import("./RuntimeAudit").RuntimeAudit;
     };
   }
 }
@@ -142,9 +149,20 @@ export const BrainDebug = {
       .join(" ");
     const n = log.needs;
     const ctxBit = log.context ? ` context=${log.context}` : "";
+    const prevBit =
+      log.previous != null && log.previous !== ""
+        ? ` previous=${log.previous}`
+        : log.previous === null
+          ? " previous=none"
+          : "";
+    const novBit = log.novelty ? ` novelty=${log.novelty}` : "";
+    const chainBit = log.chain ? ` chain=${log.chain}` : "";
+    const chainBoostHint = /chainBoost=/.test(log.reason)
+      ? ` reason=${log.reason.match(/chainBoost=[^\s]+/)?.[0] ?? log.reason}`
+      : ` reason=${log.reason}`;
     console.log(
-      `[Brain] pick=${log.pick} util=${log.utility.toFixed(2)} reason=${log.reason}${ctxBit}\n` +
-        `Needs e=${n.e} f=${n.f} b=${n.b} c=${n.c} s=${n.s} mood=${n.mood}\n` +
+      `[Brain] pick=${log.pick}${chainBoostHint}${prevBit}${novBit}${chainBit}${ctxBit}\n` +
+        `util=${log.utility.toFixed(2)} Needs e=${n.e} f=${n.f} b=${n.b} c=${n.c} s=${n.s} mood=${n.mood}\n` +
         `top: ${top} | state=${log.stateId} idle=${log.idleSeconds.toFixed(1)}s`,
     );
     if (mem && now != null) {
@@ -158,7 +176,7 @@ export const BrainDebug = {
           : "";
       el.textContent =
         `${lastContextLine || lastUserLine}\n` +
-        `pick ${log.pick} (${log.utility.toFixed(2)})\n` +
+        `pick ${log.pick} (${log.utility.toFixed(2)})${prevBit}${novBit}${chainBit}\n` +
         `${log.reason}\n` +
         `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}` +
         (memLine ? `\n${memLine}` : "");
@@ -174,15 +192,17 @@ export const BrainDebug = {
     }
   },
 
-  suppress(id: string, reason: string, noveltyOrAge?: number): void {
+  suppress(
+    id: string,
+    reason: string,
+    opts?: { ageSec?: number; novelty?: number },
+  ): void {
     if (!flagEnabled()) return;
-    const extra =
-      noveltyOrAge != null
-        ? reason.includes("recent") || reason.includes("Used") || reason.includes("age")
-          ? ` age=${noveltyOrAge.toFixed(1)}s`
-          : ` novelty=${noveltyOrAge.toFixed(2)}`
-        : "";
-    console.log(`[Brain] suppress=${id} reason=${reason}${extra}`);
+    const ageBit =
+      opts?.ageSec != null ? ` age=${opts.ageSec.toFixed(1)}s` : "";
+    const novBit =
+      opts?.novelty != null ? ` novelty=${opts.novelty.toFixed(2)}` : "";
+    console.log(`[Brain] suppress=${id} reason=${reason}${ageBit}${novBit}`);
   },
 
   memory(mem: Memory, now: number): void {

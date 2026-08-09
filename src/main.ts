@@ -8,6 +8,7 @@ import { selectAnimation } from "./anim/AnimationSelector";
 import { loadManifest } from "./assets/manifest";
 import { BehaviorBrain } from "./behavior/BehaviorBrain";
 import { BrainDebug, type AnimSource } from "./behavior/BrainDebug";
+import { RuntimeAudit } from "./behavior/RuntimeAudit";
 import { Needs } from "./behavior/Needs";
 import { GameLoop } from "./core/GameLoop";
 import { CursorTracker } from "./input/CursorTracker";
@@ -85,18 +86,23 @@ async function bootstrap(): Promise<void> {
   await userActivity.start();
   const contextInterpreter = new LocalContextInterpreter();
 
-  // Debug : localStorage.sophieDebugBrain / sophieUseOllama = "1"
+  // Debug : localStorage.sophieDebugBrain / sophieDebugRuntime / sophieUseOllama = "1"
   // Compteurs anim : Sophie.animationCounts / Sophie.lastAnim (changements de clip uniquement).
+  // Rapport runtime : Sophie.runtimeReport / Sophie.runtimeAudit.formatReport()
   window.Sophie = {
     ...window.Sophie,
     debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
+    debugRuntime:
+      window.Sophie?.debugRuntime ?? localStorage.getItem("sophieDebugRuntime") === "1",
     useOllama: window.Sophie?.useOllama ?? localStorage.getItem("sophieUseOllama") === "1",
     lastDecision: null,
     lastUserActivity: null,
     lastContext: null,
     animationCounts: {},
     lastAnim: null,
+    runtimeReport: null,
   };
+  RuntimeAudit.reset();
 
   /** Dernière source d'entrée non-brain (tray / pointeur) — reset après un tick. */
   let pendingInputSource: AnimSource | null = null;
@@ -142,6 +148,10 @@ async function bootstrap(): Promise<void> {
   machine.start(ctxBase());
   player.play("idle");
   BrainDebug.anim("IDLE", "idle", "boot");
+  RuntimeAudit.state(null, "IDLE");
+  RuntimeAudit.anim("IDLE", "idle", "boot");
+
+  let lastTrackedState = machine.currentId;
 
   new PointerInput({
     canvas,
@@ -158,7 +168,7 @@ async function bootstrap(): Promise<void> {
     },
     onDraggingChange: (dragging) => {
       dirtyMotion = true;
-      if (dragging) brain.clearGoal();
+      if (dragging) brain.clearGoal("drag");
     },
   });
 
@@ -175,7 +185,7 @@ async function bootstrap(): Promise<void> {
     const state = map[action];
     if (state) {
       pendingInputSource = "user";
-      brain.clearGoal();
+      brain.clearGoal("tray");
       machine.request(state as never, true);
     }
   });
@@ -213,16 +223,19 @@ async function bootstrap(): Promise<void> {
                 `reaction opportunity=look/happy`,
             );
             BrainDebug.memory(brain.memory, now);
+            RuntimeAudit.userSignal("user_returned", brain.memory);
           } else if (!prevIdle && activity.userIdle) {
             brain.memory.remember("user_became_idle", now, 60_000);
             brain.memory.noteActivity(0.25);
             BrainDebug.log("user_became_idle reaction opportunity=look/window/walk");
             BrainDebug.memory(brain.memory, now);
+            RuntimeAudit.userSignal("user_became_idle", brain.memory);
           }
         }
         if (signal === "busyChanged" && activity.userBusy && !prevBusy) {
           brain.memory.remember("user_became_busy", now, 40_000);
           BrainDebug.log("user_became_busy");
+          RuntimeAudit.userSignal("user_became_busy", brain.memory);
         }
         // Wake soft uniquement — jamais de goal spatial vers l'app active.
         brain.notifyUserActivity(signal);
@@ -239,6 +252,11 @@ async function bootstrap(): Promise<void> {
 
       const result = machine.update(ctxBase(), dt);
       needs.update(dt, machine.currentId);
+
+      if (machine.currentId !== lastTrackedState) {
+        RuntimeAudit.state(lastTrackedState, machine.currentId);
+        lastTrackedState = machine.currentId;
+      }
 
       // Le cerveau impose le déplacement (goTo / chase / perch / fall).
       // Les activités stationnaires gardent le motion idle de l'état.
@@ -288,6 +306,7 @@ async function bootstrap(): Promise<void> {
           animId,
         );
         BrainDebug.anim(machine.currentId, animId, source);
+        RuntimeAudit.anim(machine.currentId, animId, source);
         pendingInputSource = null;
         player.play(animId);
         lastAnim = animId;

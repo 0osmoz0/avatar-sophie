@@ -19,6 +19,7 @@ import type { BrainContext, Consideration } from "./considerations/types";
 import { WALK_SPEED, RUN_SPEED, type MotionIntent } from "../motion/Locomotion";
 import { EventBus } from "../core/EventBus";
 import { BrainDebug } from "./BrainDebug";
+import { RuntimeAudit } from "./RuntimeAudit";
 import {
   emptyInterpretedContext,
   type InterpretedUserContext,
@@ -123,6 +124,8 @@ export class BehaviorBrain {
     if (busyInterrupted.has(sid)) {
       // Signal pour considerations angry/crying — pas de cooldown bloquant.
       this.memory.remember("interrupted", performance.now());
+      // Observation Phase 5 : drag/tray peuvent couper un busy — tracer seulement.
+      RuntimeAudit.interruption(sid, kind, kind === "drag" || kind === "tray");
     }
     if (this.#goal) {
       BrainDebug.log(`clearGoal ${goalLabel(this.#goal)} (${kind})`);
@@ -244,7 +247,11 @@ export class BehaviorBrain {
       for (const s of scored.slice(0, 6)) {
         const nov = ctx.memory.noveltyModifier(s.c.id);
         if (nov < 0.88 && s.c.id !== pick.c.id) {
-          BrainDebug.suppress(s.c.id, "recently_used", nov);
+          const age = ctx.memory.ageSec(s.c.id, ctx.now);
+          BrainDebug.suppress(s.c.id, "recently_used", {
+            ageSec: age ?? undefined,
+            novelty: nov,
+          });
         }
       }
     }
@@ -253,6 +260,10 @@ export class BehaviorBrain {
     if (pick.c.onComplete) {
       goal.onComplete = { ...pick.c.onComplete, ...goal.onComplete };
     }
+
+    const previous = ctx.memory.lastBehavior();
+    const chain =
+      previous != null ? `${previous}→${pick.c.id}` : pick.c.id;
 
     BrainDebug.decision(
       {
@@ -268,10 +279,15 @@ export class BehaviorBrain {
         stateId: ctx.stateId,
         idleSeconds: ctx.idleSeconds,
         context: BrainDebug.formatContextShort(ctx.interpretedContext),
+        previous,
+        novelty: ctx.memory.noveltyLabel(pick.c.id),
+        noveltyValue: ctx.memory.noveltyModifier(pick.c.id),
+        chain,
       },
       this.memory,
       ctx.now,
     );
+    RuntimeAudit.decide(pick.c.id, pick.reason, previous);
     this.events.emit("decide", {
       pick: pick.c.id,
       utility: pick.u,
@@ -294,6 +310,7 @@ export class BehaviorBrain {
     );
     this.#nextDecideAt = now + (longAct ? 14_000 : 8_000) + Math.random() * 12_000;
     BrainDebug.log(`setGoal ${id}`);
+    RuntimeAudit.setGoal(id);
   }
 
   #executeGoal(

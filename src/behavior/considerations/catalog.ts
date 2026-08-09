@@ -25,15 +25,91 @@ function novelty(ctx: BrainContext, id: string): number {
   return ctx.memory.noveltyModifier(id);
 }
 
-/** final = base × novelty × contextModifier — Needs/Memory déjà dans base (ready→0). */
+/**
+ * Boost soft après un comportement récent — jamais de transition forcée.
+ * Multiplicateur ≈ 1.06–1.18.
+ */
+function chainBoost(ctx: BrainContext, id: string): number {
+  const prev = ctx.memory.lastBehavior();
+  if (!prev) return 1;
+
+  const table: Record<string, Partial<Record<string, number>>> = {
+    think: { work: 1.22, study: 1.18 },
+    work: { coffee: 1.12, yawn: 1.12, think: 1.1, idle: 1.08 },
+    look: { perch: 1.16, window: 1.16 },
+    dance: { idle: 1.12, look: 1.1, walk: 1.08 },
+    eat: { idle: 1.12, walk: 1.1 },
+    yawn: { sleep: 1.15, idle: 1.08, work: 1.06 },
+  };
+  return table[prev]?.[id] ?? 1;
+}
+
+/**
+ * Pénalité soft si on recrée une oscillation récente (walk↔look, idle↔look, …).
+ * Jamais un blocage absolu.
+ */
+function oscillationPenalty(ctx: BrainContext, id: string): number {
+  const chain = ctx.memory.recentChain(2);
+  if (chain.length < 2) return 1;
+  const a = chain[0]!;
+  const b = chain[1]!;
+  // Pattern a→b et on re-évalue a
+  if (a !== id || b === id) return 1;
+
+  const oscillating =
+    (a === "walk" && b === "look") ||
+    (a === "look" && b === "walk") ||
+    (a === "idle" && b === "look") ||
+    (a === "look" && b === "idle") ||
+    (a === "idle" && b === "walk") ||
+    (a === "walk" && b === "idle") ||
+    (a === "look" && b === "think") ||
+    (a === "think" && b === "look");
+
+  return oscillating ? 0.65 : 1;
+}
+
+/** final = base × novelty × chain × oscillation × contextModifier */
 function ctxScore(ctx: BrainContext, id: string, base: number): number {
   if (base <= 0) return 0;
-  return withUserContext(base * novelty(ctx, id), userActivityFactor(id, ctx));
+  const scored =
+    base * novelty(ctx, id) * chainBoost(ctx, id) * oscillationPenalty(ctx, id);
+  return withUserContext(scored, userActivityFactor(id, ctx));
 }
 
 function withUserReason(base: string, ctx: BrainContext, id?: string): string {
   const nov = id ? ` novelty=${ctx.memory.noveltyLabel(id)}` : "";
-  return `${base}${nov} ${userHint(ctx)}`;
+  const prev = ctx.memory.lastBehavior();
+  const chainBit =
+    id && prev && chainBoost(ctx, id) > 1.01 ? ` chainBoost=${prev}→${id}` : "";
+  const osc =
+    id && oscillationPenalty(ctx, id) < 0.99 ? ` oscPenalty` : "";
+  return `${base}${nov}${chainBit}${osc} ${userHint(ctx)}`;
+}
+
+/** Facteur soft selon idleSeconds — pas de timer d'animation. */
+function idleScale(ctx: BrainContext, kind: "calm" | "explore" | "move" | "play"): number {
+  const t = ctx.idleSeconds;
+  if (kind === "calm") {
+    if (t < 2) return 1.12;
+    if (t > 15) return 0.88;
+    return 1;
+  }
+  if (kind === "move") {
+    if (t >= 6 && t < 15) return 1.1;
+    if (t >= 15) return 1.06;
+    return 1;
+  }
+  if (kind === "explore") {
+    if (t >= 15 && t < 25) return 1.12;
+    if (t >= 25) return 1.08;
+    if (t >= 6) return 1.05;
+    return 1;
+  }
+  // play (dance)
+  if (t >= 25) return 1.14;
+  if (t >= 18) return 1.08;
+  return 1;
 }
 
 /** Gates de chaîne — revalidés au moment d'activer l'étape. */
@@ -79,7 +155,9 @@ export const idleHere: Consideration = {
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const calm = (100 - ctx.needs.boredom) / 100;
-    const base = ctx.idleSeconds < 2 ? 0.3 : 0.2 + calm * 0.32;
+    // Court idle → pause calme ; idle long → moins collant (laisse explore/play).
+    let base = ctx.idleSeconds < 2 ? 0.32 : 0.18 + calm * 0.28;
+    base *= idleScale(ctx, "calm");
     return ctxScore(ctx, this.id, base);
   },
   buildGoal: () => ({
@@ -102,10 +180,10 @@ export const walkSomewhere: Consideration = {
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     const restlessness = n01(ctx.needs.boredom);
-    // Walk utile surtout si vraiment restive — sinon think/look/idle peuvent gagner.
-    const settled = ctx.idleSeconds > 10 ? 0.18 : ctx.idleSeconds > 6 ? 0.08 : 0;
+    const settled = ctx.idleSeconds > 10 ? 0.14 : ctx.idleSeconds > 6 ? 0.07 : 0;
     let base = 0.06 + restlessness * 0.48 + settled;
     if (ctx.needs.boredom < 35) base *= 0.7;
+    base *= idleScale(ctx, "move");
     const dx = windowHorizDist(ctx);
     if (
       dx != null &&
@@ -156,9 +234,13 @@ export const lookAround: Consideration = {
   },
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
-    let base = 0.12 + n01(ctx.needs.curiosity) * 0.42 + n01(ctx.needs.boredom) * 0.12;
+    let base = 0.1 + n01(ctx.needs.curiosity) * 0.4 + n01(ctx.needs.boredom) * 0.1;
     if (ctx.memory.recentWithin("user_returned", ctx.now, 45_000)) base += 0.08;
     if (ctx.memory.recentWithin("user_became_idle", ctx.now, 60_000)) base += 0.06;
+    // idleSeconds : hausse légère — moins forte que perch/window (évite look dominant).
+    const t = ctx.idleSeconds;
+    if (t >= 6 && t < 15) base *= 1.06;
+    else if (t >= 15 && t < 25) base *= 1.05;
     return ctxScore(ctx, this.id, base);
   },
   onComplete: { curiosity: -6, boredom: -4 },
@@ -291,7 +373,15 @@ export const think = activity({
   cooldownMs: 55_000,
   priority: 0,
   reason: (ctx) => `curiosity=${ctx.needs.curiosity.toFixed(0)} ponder`,
-  score: (ctx) => 0.16 + n01(ctx.needs.curiosity) * 0.36 + n01(ctx.needs.boredom) * 0.08,
+  score: (ctx) => {
+    let base =
+      0.14 + n01(ctx.needs.curiosity) * 0.34 + n01(ctx.needs.boredom) * 0.08;
+    // 0–2 s : calme ; 6–12 s : légère hausse (avec look/walk).
+    if (ctx.idleSeconds < 2) base *= 1.1;
+    else if (ctx.idleSeconds >= 6 && ctx.idleSeconds < 12) base *= 1.06;
+    else if (ctx.idleSeconds > 15) base *= 0.9;
+    return base;
+  },
   onComplete: { curiosity: -4 },
 });
 
@@ -307,12 +397,13 @@ export const dance = activity({
     if (ctx.needs.energy < 35) return 0;
     // Cooldown Memory suffit — pas de double-blocage recentlyDid agressif.
     if (ctx.memory.recentlyDid("dance", 2)) return 0;
-    return (
+    const base =
       0.24 +
       n01(ctx.needs.boredom) * 0.7 +
       n01(ctx.needs.energy) * 0.22 +
-      (ctx.needs.restless ? 0.12 : 0)
-    );
+      (ctx.needs.restless ? 0.12 : 0);
+    // Idle prolongé : peut concurrencer le calme — jamais un timer qui force.
+    return base * idleScale(ctx, "play");
   },
   onComplete: { boredom: -22, energy: -8, social: 6 },
 });
@@ -372,12 +463,11 @@ export const perchEdge: Consideration = {
     const edge = ctx.world.nearestEdge;
     const dist = Math.abs(edge.x - ctx.body.x);
     const reach = Math.max(0, 1 - dist / 2400);
-    return ctxScore(
-      ctx,
-      this.id,
+    const base =
       (0.14 + n01(ctx.needs.curiosity) * 0.58 + n01(ctx.needs.boredom) * 0.18) *
-        (0.4 + 0.6 * reach),
-    );
+      (0.4 + 0.6 * reach) *
+      idleScale(ctx, "explore");
+    return ctxScore(ctx, this.id, base);
   },
   onComplete: { curiosity: -14, boredom: -10 },
   buildGoal(ctx) {
@@ -428,7 +518,11 @@ export const investigateWindow: Consideration = {
     const interest =
       0.45 + n01(ctx.needs.curiosity) * 0.65 + n01(ctx.needs.boredom) * 0.45;
     const spatial = 0.22 + 1.45 * proximity * proximity;
-    return ctxScore(ctx, this.id, interest * spatial);
+    return ctxScore(
+      ctx,
+      this.id,
+      interest * spatial * idleScale(ctx, "explore"),
+    );
   },
   onComplete: { curiosity: -12, boredom: -8 },
   buildGoal(ctx) {

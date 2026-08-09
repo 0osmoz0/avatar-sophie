@@ -14,6 +14,7 @@ import {
   type InteractionKind,
 } from "../behavior/InteractionResolver";
 import { BrainDebug } from "../behavior/BrainDebug";
+import { RuntimeAudit } from "../behavior/RuntimeAudit";
 
 export interface PointerInputOptions {
   canvas: HTMLCanvasElement;
@@ -91,17 +92,28 @@ export class PointerInput {
 
     for (const r of result.remember) {
       this.#memory.remember(r.label, now, r.cooldownMs ?? 0);
+      RuntimeAudit.remembered(r.label, this.#memory);
     }
     if (result.notePositive) this.#memory.notePositive(result.notePositive);
     if (result.noteFrustration) this.#memory.noteFrustration(result.noteFrustration);
     if (result.noteActivity) this.#memory.noteActivity(result.noteActivity);
+
+    RuntimeAudit.interaction({
+      kind,
+      stateId: this.#machine.currentId,
+      deferred: result.deferred,
+      immediateState: result.immediateState,
+      suppressReason: result.suppressReason,
+      memory: this.#memory,
+      now,
+    });
 
     if (result.suppressReason) {
       const age = this.#memory.ageSec(kind, now);
       BrainDebug.suppress(
         result.immediateState?.toLowerCase() ?? kind,
         result.suppressReason,
-        age ?? undefined,
+        { ageSec: age ?? undefined },
       );
     }
 
@@ -111,6 +123,7 @@ export class PointerInput {
     }
 
     if (result.immediateState) {
+      RuntimeAudit.state(this.#machine.currentId, result.immediateState);
       this.#machine.request(result.immediateState, true);
     }
   }
