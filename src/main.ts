@@ -7,6 +7,7 @@ import { AnimationRegistry } from "./anim/AnimationRegistry";
 import { selectAnimation } from "./anim/AnimationSelector";
 import { loadManifest } from "./assets/manifest";
 import { BehaviorBrain } from "./behavior/BehaviorBrain";
+import { BrainDebug, type AnimSource } from "./behavior/BrainDebug";
 import { Needs } from "./behavior/Needs";
 import { GameLoop } from "./core/GameLoop";
 import { CursorTracker } from "./input/CursorTracker";
@@ -85,6 +86,7 @@ async function bootstrap(): Promise<void> {
   const contextInterpreter = new LocalContextInterpreter();
 
   // Debug : localStorage.sophieDebugBrain / sophieUseOllama = "1"
+  // Compteurs anim : Sophie.animationCounts / Sophie.lastAnim (changements de clip uniquement).
   window.Sophie = {
     ...window.Sophie,
     debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
@@ -92,6 +94,32 @@ async function bootstrap(): Promise<void> {
     lastDecision: null,
     lastUserActivity: null,
     lastContext: null,
+    animationCounts: {},
+    lastAnim: null,
+  };
+
+  /** Dernière source d'entrée non-brain (tray / pointeur) — reset après un tick. */
+  let pendingInputSource: AnimSource | null = null;
+  const USER_STATES = new Set([
+    "PET",
+    "WAVE",
+    "DRAG",
+    "LOVE",
+    "POKE",
+    "BLOW_KISS",
+  ]);
+  const CHAIN_CLIP_STATES = new Set(["OVERWORK", "SURPRISE"]);
+
+  const resolveAnimSource = (
+    stateId: string,
+    requested: string,
+    played: string,
+  ): AnimSource => {
+    if (played !== requested) return "physics";
+    if (pendingInputSource) return pendingInputSource;
+    if (USER_STATES.has(stateId)) return "user";
+    if (CHAIN_CLIP_STATES.has(stateId)) return "chain";
+    return "brain";
   };
 
   const renderer = new CanvasRenderer(canvas);
@@ -111,12 +139,16 @@ async function bootstrap(): Promise<void> {
 
   machine.start(ctxBase());
   player.play("idle");
+  BrainDebug.anim("IDLE", "idle", "boot");
 
   new PointerInput({
     canvas,
     body,
     machine,
     holdOffsetY: PET_HEIGHT * 0.35,
+    onUserAction: () => {
+      pendingInputSource = "user";
+    },
     onDraggingChange: (dragging) => {
       dirtyMotion = true;
       if (dragging) brain.clearGoal();
@@ -135,6 +167,7 @@ async function bootstrap(): Promise<void> {
     };
     const state = map[action];
     if (state) {
+      pendingInputSource = "user";
       brain.clearGoal();
       machine.request(state as never, true);
     }
@@ -209,6 +242,13 @@ async function bootstrap(): Promise<void> {
         body,
       );
       if (animId !== lastAnim) {
+        const source = resolveAnimSource(
+          machine.currentId,
+          result.animation,
+          animId,
+        );
+        BrainDebug.anim(machine.currentId, animId, source);
+        pendingInputSource = null;
         player.play(animId);
         lastAnim = animId;
       }

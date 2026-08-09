@@ -20,6 +20,15 @@ export interface DecisionLog {
   context?: string;
 }
 
+export type AnimSource = "brain" | "user" | "physics" | "chain" | "boot";
+
+export interface AnimChangeLog {
+  state: string;
+  clip: string;
+  source: AnimSource;
+  at: number;
+}
+
 declare global {
   interface Window {
     Sophie?: {
@@ -29,6 +38,9 @@ declare global {
       lastDecision?: DecisionLog | null;
       lastUserActivity?: UserActivitySnapshot | null;
       lastContext?: InterpretedUserContext | null;
+      /** Compteurs de clips réellement joués (changements uniquement). */
+      animationCounts?: Record<string, number>;
+      lastAnim?: AnimChangeLog | null;
     };
   }
 }
@@ -48,6 +60,9 @@ function flagEnabled(): boolean {
 let overlayEl: HTMLDivElement | null = null;
 let lastUserLine = "";
 let lastContextLine = "";
+/** Compteurs locaux — exposés aussi sur `window.Sophie.animationCounts`. */
+const animationCounts: Record<string, number> = {};
+let lastAnimKey = "";
 
 function ensureOverlay(): HTMLDivElement | null {
   if (typeof document === "undefined") return null;
@@ -161,4 +176,32 @@ export const BrainDebug = {
   },
 
   formatContextHint,
+
+  /**
+   * Trace un changement de clip réellement joué (pas chaque frame).
+   * Actif uniquement si le debug Brain est activé (logs) ; les compteurs
+   * sont toujours mis à jour pour lecture via `Sophie.animationCounts`.
+   */
+  anim(state: string, clip: string, source: AnimSource = "brain"): void {
+    const key = `${state}|${clip}|${source}`;
+    if (key === lastAnimKey) return;
+    lastAnimKey = key;
+
+    animationCounts[clip] = (animationCounts[clip] ?? 0) + 1;
+    const entry: AnimChangeLog = { state, clip, source, at: Date.now() };
+    patchSophie({ animationCounts: { ...animationCounts }, lastAnim: entry });
+
+    if (!flagEnabled()) return;
+    console.log(`[Anim] state=${state} clip=${clip} source=${source}`);
+  },
+
+  animationCounts(): Record<string, number> {
+    return { ...animationCounts };
+  },
+
+  resetAnimationCounts(): void {
+    for (const k of Object.keys(animationCounts)) delete animationCounts[k];
+    lastAnimKey = "";
+    patchSophie({ animationCounts: {}, lastAnim: null });
+  },
 };

@@ -15,6 +15,8 @@ export interface PointerInputOptions {
   /** Hauteur visuelle pour placer le personnage sous le curseur pendant le drag. */
   holdOffsetY: number;
   onDraggingChange?: (dragging: boolean) => void;
+  /** Marqueur debug : toute commande utilisateur (pet/wave/drag/fall/menu). */
+  onUserAction?: () => void;
 }
 
 export class PointerInput {
@@ -23,6 +25,7 @@ export class PointerInput {
   readonly #machine: StateMachine;
   readonly #holdOffsetY: number;
   readonly #onDraggingChange?: (dragging: boolean) => void;
+  readonly #onUserAction?: () => void;
 
   #pointerId: number | null = null;
   #dragging = false;
@@ -37,6 +40,7 @@ export class PointerInput {
     this.#machine = options.machine;
     this.#holdOffsetY = options.holdOffsetY;
     this.#onDraggingChange = options.onDraggingChange;
+    this.#onUserAction = options.onUserAction;
 
     this.#canvas.addEventListener("pointerdown", this.#onDown);
     this.#canvas.addEventListener("pointermove", this.#onMove);
@@ -74,6 +78,7 @@ export class PointerInput {
     const dy = event.clientY - this.#downY;
     if (!this.#dragging && Math.hypot(dx, dy) > 6) {
       this.#dragging = true;
+      this.#onUserAction?.();
       this.#machine.request("DRAG", true);
       this.#onDraggingChange?.(true);
     }
@@ -95,6 +100,7 @@ export class PointerInput {
       this.#dragging = false;
       this.#onDraggingChange?.(false);
       // Relâchement en l'air → chute.
+      this.#onUserAction?.();
       this.#machine.request("FALL", true);
       return;
     }
@@ -105,11 +111,13 @@ export class PointerInput {
 
     if (now - this.#lastClickAt < 320) {
       this.#lastClickAt = 0;
+      this.#onUserAction?.();
       this.#machine.request("WAVE");
       return;
     }
 
     this.#lastClickAt = now;
+    this.#onUserAction?.();
     this.#machine.request("PET");
   };
 
@@ -137,6 +145,9 @@ export class PointerInput {
       return;
     }
     const state = map[key];
-    if (state) this.#machine.request(state as never);
+    if (state) {
+      this.#onUserAction?.();
+      this.#machine.request(state as never);
+    }
   };
 }
