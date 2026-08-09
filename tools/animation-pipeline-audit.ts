@@ -241,10 +241,10 @@ const INVENTORY: AnimRow[] = [
     clip: "chase",
     state: "CURSOR_CHASE",
     access: "brain",
-    trigger: "cursor mode chase (~28% si curious+moving)",
+    trigger: "cursor chase si curious+moving+dist<220",
     consideration: "cursor",
-    path: "cursor → reactCursor chase → CURSOR_CHASE → chase",
-    problemHint: "rare (score bas + random 0.55 reject + 28% chase)",
+    path: "cursor → reactCursor chase → CURSOR_CHASE → chase|run",
+    problemHint: "rare (cooldown + concurrence + focus)",
   },
   {
     clip: "push",
@@ -268,9 +268,9 @@ const INVENTORY: AnimRow[] = [
     clip: "happy",
     state: "PET | HAPPY | CURSOR_CHASE",
     access: "brain+user",
-    trigger: "clic PET | chase proche → HAPPY",
-    consideration: "cursor (conséquence) / user",
-    path: "PET→happy | chase dist<36 → happy → HAPPY",
+    trigger: "clic affection≥50 | consideration happy | chase proche",
+    consideration: "happy / cursor / user",
+    path: "PET|HAPPY→happy | chase→happy | happy→HAPPY",
     problemHint: "",
   },
   {
@@ -303,38 +303,38 @@ const INVENTORY: AnimRow[] = [
   {
     clip: "angry",
     state: "POKE | ANGRY",
-    access: "orphan",
-    trigger: "aucun (POKE/ANGRY jamais request)",
-    consideration: "—",
-    path: "État enregistré, aucun déclencheur",
-    problemHint: "ORPHELINE — A décision absente",
+    access: "brain+user",
+    trigger: "consideration angry | hold poke",
+    consideration: "angry",
+    path: "angry → ANGRY → angry | user POKE → angry",
+    problemHint: "",
   },
   {
     clip: "excited",
     state: "EXCITED",
-    access: "orphan",
-    trigger: "aucun",
-    consideration: "—",
-    path: "État enregistré, aucun déclencheur",
-    problemHint: "ORPHELINE — A décision absente",
+    access: "brain",
+    trigger: "consideration excited (playful)",
+    consideration: "excited",
+    path: "excited → EXCITED → excited",
+    problemHint: "",
   },
   {
     clip: "crying",
     state: "CRYING",
-    access: "orphan",
-    trigger: "aucun",
-    consideration: "—",
-    path: "État enregistré, aucun déclencheur",
-    problemHint: "ORPHELINE — A décision absente",
+    access: "brain",
+    trigger: "consideration crying (rare)",
+    consideration: "crying",
+    path: "crying → CRYING → crying",
+    problemHint: "",
   },
   {
     clip: "blow_kiss",
     state: "BLOW_KISS",
-    access: "orphan",
-    trigger: "aucun",
-    consideration: "—",
-    path: "État enregistré, aucun déclencheur",
-    problemHint: "ORPHELINE — A décision absente",
+    access: "brain+user",
+    trigger: "clic affection haute | consideration blow_kiss",
+    consideration: "blow_kiss",
+    path: "blow_kiss → BLOW_KISS → blow_kiss | user clic",
+    problemHint: "",
   },
 ];
 
@@ -414,18 +414,18 @@ function ctxOf(opts: {
       secondsSinceLastInput: 30,
     });
   const cursorX = opts.cursorNear ? bodyX + 80 : bodyX + 900;
+  const cursorY = opts.cursorNear ? 820 : 100; // près de la tête (body.y - 80)
   return {
     now: opts.now ?? 1_000_000,
     body: { x: bodyX, y: 900 } as Body,
     cursor: {
       x: cursorX,
-      y: 100,
+      y: cursorY,
       moving: opts.cursorMoving ?? false,
       idleSeconds: opts.cursorMoving ? 0 : 30,
       vx: opts.cursorMoving ? 40 : 0,
       vy: 0,
-      distanceTo: (x: number, y: number) =>
-        Math.hypot(cursorX - x, 100 - y),
+      distanceTo: (x: number, y: number) => Math.hypot(cursorX - x, cursorY - y),
     } as CursorTracker,
     needs: opts.needs,
     memory: opts.memory ?? new Memory(),
@@ -505,8 +505,13 @@ function expandPickToClips(
         bump(clipCounts, "yawn");
         if (ctx.needs.energy <= 45 || ctx.needs.fatigue >= 50) bump(clipCounts, "coffee");
       }
-      // OVERWORK rare si exhausted
-      if (ctx.needs.exhausted) {
+      // OVERWORK mid-session si déjà fatiguée (seuil ActivityState)
+      if (
+        ctx.needs.exhausted ||
+        ctx.needs.fatigue >= 82 ||
+        ctx.needs.energy <= 16 ||
+        (ctx.needs.fatigue >= 60 && ctx.needs.energy <= 40)
+      ) {
         bump(clipCounts, "overwork");
         bump(clipCounts, "yawn");
       }
@@ -567,19 +572,39 @@ function expandPickToClips(
     case "cursor": {
       if (goal.kind === "reactCursor" && goal.mode === "chase") {
         bump(clipCounts, "chase");
-        // ~proche → happy
-        if (Math.random() < 0.35) bump(clipCounts, "happy");
+        bump(clipCounts, "run"); // followBody rapide → selectAnimation
+        bump(clipCounts, "happy");
       } else {
         bump(clipCounts, "surprise"); // CURSOR_NOTICE
       }
       break;
     }
+    case "angry":
+      bump(clipCounts, "angry");
+      break;
+    case "excited":
+      bump(clipCounts, "excited");
+      break;
+    case "crying":
+      bump(clipCounts, "crying");
+      break;
+    case "blow_kiss":
+      bump(clipCounts, "blow_kiss");
+      break;
+    case "happy":
+      bump(clipCounts, "happy");
+      break;
     default:
       bump(clipCounts, `(unknown:${pickId})`);
   }
 }
 
-type Profile = { name: string; build: (i: number) => BrainContext; n: number };
+type Profile = {
+  name: string;
+  build: (i: number) => BrainContext;
+  n: number;
+  seedMemory?: (mem: Memory, now: number) => void;
+};
 
 function runProfiles(profiles: Profile[]): {
   clipCounts: Counts;
@@ -595,6 +620,7 @@ function runProfiles(profiles: Profile[]): {
       const ctx = profile.build(i);
       ctx.memory = mem;
       ctx.now = now;
+      profile.seedMemory?.(mem, now);
       const pick = pickOnce(ctx);
       if (!pick) {
         bump(considerationCounts, "(none)");
@@ -775,14 +801,91 @@ const profiles: Profile[] = [
     build: () =>
       ctxOf({
         needs: makeNeeds({
-          energy: 20,
-          fatigue: 85,
+          // Assez fatiguée pour OVERWORK mid-session, pas encore bloquée au start
+          energy: 35,
+          fatigue: 70,
           boredom: 50,
           curiosity: 40,
-          // exhausted getter — forcer via fatigue/energy si possible
         }),
         hour: 14,
       }),
+  },
+  {
+    name: "playful excited",
+    n: N,
+    build: () =>
+      ctxOf({
+        needs: makeNeeds({
+          energy: 70,
+          fatigue: 12,
+          boredom: 75,
+          curiosity: 72,
+        }),
+        idleSeconds: 10,
+      }),
+  },
+  {
+    name: "neglected angry",
+    n: N,
+    build: () =>
+      ctxOf({
+        needs: makeNeeds({
+          energy: 55,
+          fatigue: 20,
+          boredom: 70,
+          curiosity: 40,
+          affection: 18,
+        }),
+      }),
+  },
+  {
+    name: "distressed crying",
+    n: N,
+    build: () =>
+      ctxOf({
+        needs: makeNeeds({
+          energy: 10,
+          fatigue: 92,
+          boredom: 30,
+          curiosity: 35,
+          affection: 22,
+        }),
+      }),
+  },
+  {
+    name: "affectionate after pet",
+    n: N,
+    build: () =>
+      ctxOf({
+        needs: makeNeeds({
+          energy: 70,
+          fatigue: 15,
+          boredom: 35,
+          curiosity: 50,
+          affection: 80,
+          social: 62,
+        }),
+      }),
+    seedMemory: (mem, now) => {
+      mem.remember("pet", now);
+    },
+  },
+  {
+    name: "interrupted tired",
+    n: Math.floor(N / 2),
+    build: () =>
+      ctxOf({
+        needs: makeNeeds({
+          energy: 28,
+          fatigue: 70,
+          boredom: 40,
+          curiosity: 40,
+          affection: 32,
+        }),
+      }),
+    seedMemory: (mem, now) => {
+      mem.remember("interrupted", now);
+    },
   },
 ];
 

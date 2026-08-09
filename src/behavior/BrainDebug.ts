@@ -8,6 +8,7 @@
 import type { InterpretedUserContext } from "../user/InterpretedUserContext";
 import { formatContextHint } from "../user/InterpretedUserContext";
 import type { UserActivitySnapshot } from "../user/UserActivitySnapshot";
+import type { Memory } from "./Memory";
 
 export interface DecisionLog {
   pick: string;
@@ -132,7 +133,7 @@ export const BrainDebug = {
     }
   },
 
-  decision(log: DecisionLog): void {
+  decision(log: DecisionLog, mem?: Memory, now?: number): void {
     patchSophie({ lastDecision: log });
     if (!flagEnabled()) return;
     const top = log.top
@@ -146,13 +147,21 @@ export const BrainDebug = {
         `Needs e=${n.e} f=${n.f} b=${n.b} c=${n.c} s=${n.s} mood=${n.mood}\n` +
         `top: ${top} | state=${log.stateId} idle=${log.idleSeconds.toFixed(1)}s`,
     );
+    if (mem && now != null) {
+      BrainDebug.memory(mem, now);
+    }
     const el = ensureOverlay();
     if (el) {
+      const memLine =
+        mem && now != null
+          ? `pos=${mem.recentPositiveInteraction.toFixed(2)} fr=${mem.recentFrustration.toFixed(2)}`
+          : "";
       el.textContent =
         `${lastContextLine || lastUserLine}\n` +
         `pick ${log.pick} (${log.utility.toFixed(2)})\n` +
         `${log.reason}\n` +
-        `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}`;
+        `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}` +
+        (memLine ? `\n${memLine}` : "");
     }
   },
 
@@ -165,10 +174,27 @@ export const BrainDebug = {
     }
   },
 
-  suppress(id: string, reason: string, novelty?: number): void {
+  suppress(id: string, reason: string, noveltyOrAge?: number): void {
     if (!flagEnabled()) return;
-    const nov = novelty != null ? ` novelty=${novelty.toFixed(2)}` : "";
-    console.log(`[Brain] suppress=${id} reason=${reason}${nov}`);
+    const extra =
+      noveltyOrAge != null
+        ? reason.includes("recent") || reason.includes("Used") || reason.includes("age")
+          ? ` age=${noveltyOrAge.toFixed(1)}s`
+          : ` novelty=${noveltyOrAge.toFixed(2)}`
+        : "";
+    console.log(`[Brain] suppress=${id} reason=${reason}${extra}`);
+  },
+
+  memory(mem: Memory, now: number): void {
+    if (!flagEnabled()) return;
+    const entries = mem.recentEntries(now, 4);
+    const lines = entries.map((e) => `recent=${e.label} age=${e.ageSec.toFixed(1)}s`);
+    console.log(
+      `[Memory]\n${lines.join("\n") || "(empty)"}\n` +
+        `recentPositive=${mem.recentPositiveInteraction.toFixed(2)} ` +
+        `recentFrustration=${mem.recentFrustration.toFixed(2)} ` +
+        `recentActivity=${mem.recentActivity.toFixed(2)}`,
+    );
   },
 
   formatContextShort(ctx: InterpretedUserContext): string {

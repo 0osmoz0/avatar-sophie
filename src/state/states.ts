@@ -153,7 +153,12 @@ export class ActivityState implements PetState {
   exit(): void {}
 
   update(ctx: StateContext): StateResult {
-    if (this.id === "WORK" && ctx.needs.exhausted) {
+    // Mid-session breakdown : exhausted plein OU seuil proche après quelques secondes.
+    if (
+      this.id === "WORK" &&
+      ctx.elapsed > 5 &&
+      (ctx.needs.exhausted || ctx.needs.fatigue >= 82 || ctx.needs.energy <= 16)
+    ) {
       return activityResult(this.#clip, 0, ctx.elapsed, "OVERWORK");
     }
     if (this.id === "OVERWORK") {
@@ -303,7 +308,7 @@ export function createAllStates(): PetState[] {
     new HangState(),
     new SleepState(),
     new ActivityState("COFFEE", "coffee", PRIORITY.COFFEE, 6, 12),
-    new ActivityState("WORK", "work", PRIORITY.WORK, 8, 16),
+    new ActivityState("WORK", "work", PRIORITY.WORK, 8, 18),
     new ActivityState("OVERWORK", "overwork", PRIORITY.OVERWORK, 5, 9),
     new ActivityState("STUDY", "study", PRIORITY.STUDY, 8, 14),
     new ActivityState("EAT", "eat", PRIORITY.EAT, 5, 10),

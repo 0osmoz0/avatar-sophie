@@ -41,6 +41,16 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     if (considerationId === "cursor") f *= lowDisturb ? 0.12 : 0.35;
     if (considerationId === "dance") f *= 0.5;
     if (
+      considerationId === "excited" ||
+      considerationId === "happy" ||
+      considerationId === "blow_kiss"
+    ) {
+      f *= lowDisturb ? 0.15 : 0.4;
+    }
+    if (considerationId === "angry" || considerationId === "crying") {
+      f *= lowDisturb ? 0.25 : 0.55;
+    }
+    if (
       considerationId === "idle" ||
       considerationId === "walk" ||
       considerationId === "think" ||
@@ -57,6 +67,10 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     if (considerationId === "walk") f *= 1.08;
     // Curiosité ≠ chase forcé.
     if (considerationId === "cursor") f *= 1 + social * 0.08;
+    if (considerationId === "excited") f *= 1.15 + social * 0.1;
+    if (considerationId === "happy" || considerationId === "blow_kiss") {
+      f *= 1.1 + social * 0.08;
+    }
   }
 
   if (i.mode === "casual_browsing" || i.mode === "media_watching") {
@@ -64,11 +78,15 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
       f *= 1 + autonomy * 0.12;
     }
     if (considerationId === "cursor") f *= 0.7;
+    if (considerationId === "excited" || considerationId === "happy") f *= 1.05;
   }
 
   if (i.mode === "communication") {
     if (considerationId === "cursor") f *= lowDisturb ? 0.2 : 0.45;
     if (considerationId === "idle" || considerationId === "think") f *= 1.1;
+    if (considerationId === "blow_kiss" || considerationId === "happy") {
+      f *= 1.12 + social * 0.1;
+    }
   }
 
   if (i.mode === "switching_apps") {
@@ -96,6 +114,40 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
   if (u.lastAppChangeSec < 20 && considerationId === "look") f *= 1.12;
   if (u.spaceChangeSec != null && u.spaceChangeSec < 15 && considerationId === "look") {
     f *= 1.08;
+  }
+
+  // --- Mémoire courte (soft only, jamais d'anim forcée) ---
+  const mem = ctx.memory;
+  const now = ctx.now;
+  if (mem.recentWithin("user_became_idle", now, 60_000)) {
+    if (
+      considerationId === "look" ||
+      considerationId === "window" ||
+      considerationId === "perch" ||
+      considerationId === "walk" ||
+      considerationId === "think" ||
+      considerationId === "dance"
+    ) {
+      f *= 1.1;
+    }
+  }
+  if (mem.recentWithin("user_returned", now, 45_000)) {
+    if (considerationId === "look") f *= 1.15;
+    if (considerationId === "happy") f *= 1.18;
+  }
+  if (mem.recentPositiveInteraction > 0.25) {
+    const boost = 1 + mem.recentPositiveInteraction * 0.12;
+    if (
+      considerationId === "happy" ||
+      considerationId === "blow_kiss" ||
+      considerationId === "dance" ||
+      considerationId === "excited"
+    ) {
+      f *= boost;
+    }
+  }
+  if (mem.recentFrustration > 0.25 && considerationId === "angry") {
+    f *= 1 + mem.recentFrustration * 0.15;
   }
 
   return f;

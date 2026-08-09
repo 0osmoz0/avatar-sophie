@@ -111,6 +111,19 @@ export class BehaviorBrain {
 
   /** Interruption utilisateur (drag). */
   clearGoal(kind = "interrupt"): void {
+    const busyInterrupted = new Set([
+      "SLEEP",
+      "WORK",
+      "STUDY",
+      "DANCE",
+      "COFFEE",
+      "OVERWORK",
+    ]);
+    const sid = this.#machine.currentId;
+    if (busyInterrupted.has(sid)) {
+      // Signal pour considerations angry/crying — pas de cooldown bloquant.
+      this.memory.remember("interrupted", performance.now());
+    }
     if (this.#goal) {
       BrainDebug.log(`clearGoal ${goalLabel(this.#goal)} (${kind})`);
       this.events.emit("userInteract", { kind });
@@ -133,6 +146,8 @@ export class BehaviorBrain {
 
     if (stateId === "IDLE") this.#idleSince += dt;
     else this.#idleSince = 0;
+
+    this.memory.update(dt);
 
     this.#lastCtx = {
       now,
@@ -239,20 +254,24 @@ export class BehaviorBrain {
       goal.onComplete = { ...pick.c.onComplete, ...goal.onComplete };
     }
 
-    BrainDebug.decision({
-      pick: pick.c.id,
-      utility: pick.u,
-      reason: pick.reason,
-      top: scored.slice(0, 3).map((s) => ({
-        id: s.c.id,
-        u: s.u,
-        reason: s.reason,
-      })),
-      needs: this.#needs.snapshot(),
-      stateId: ctx.stateId,
-      idleSeconds: ctx.idleSeconds,
-      context: BrainDebug.formatContextShort(ctx.interpretedContext),
-    });
+    BrainDebug.decision(
+      {
+        pick: pick.c.id,
+        utility: pick.u,
+        reason: pick.reason,
+        top: scored.slice(0, 3).map((s) => ({
+          id: s.c.id,
+          u: s.u,
+          reason: s.reason,
+        })),
+        needs: this.#needs.snapshot(),
+        stateId: ctx.stateId,
+        idleSeconds: ctx.idleSeconds,
+        context: BrainDebug.formatContextShort(ctx.interpretedContext),
+      },
+      this.memory,
+      ctx.now,
+    );
     this.events.emit("decide", {
       pick: pick.c.id,
       utility: pick.u,

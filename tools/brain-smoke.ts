@@ -13,13 +13,19 @@ import {
   investigateWindow,
   yawn,
   coffee,
+  reactCursor,
+  angry,
+  excited,
+  crying,
+  blowKiss,
+  happy,
 } from "../src/behavior/considerations/catalog";
 import type { BrainContext } from "../src/behavior/considerations/types";
 import type { Body } from "../src/motion/Body";
 import type { CursorTracker } from "../src/input/CursorTracker";
 import type { WorldSnapshot } from "../src/world/types";
 import type { Goal } from "../src/behavior/Goal";
-import { emptyUserActivitySnapshot } from "../src/user/UserActivitySnapshot";
+import { emptyUserActivitySnapshot, makeTestSnapshot } from "../src/user/UserActivitySnapshot";
 import { interpretRules } from "../src/user/LocalContextInterpreter";
 
 function mockCtx(partial: Partial<BrainContext> & { needs: Needs }): BrainContext {
@@ -167,5 +173,104 @@ const ctxMid = mockCtx({ needs: mid, hour: 11, memory: new Memory() });
 assert(coffeeGate!(ctxMid) === true, "gate COFFEE OK si encore fatiguée");
 assert(yawn.utility(ctxTired) > 0.3, "YAWN scorée si tired");
 assert(coffee.utility(ctxTired) > 0.2, "COFFEE scorée si tired");
+
+// --- Phase 2 : cursor + émotions ---
+const cursorNeeds = new Needs();
+cursorNeeds.curiosity = 75;
+cursorNeeds.social = 60;
+cursorNeeds.energy = 70;
+cursorNeeds.boredom = 40;
+const ctxCursorNear = mockCtx({
+  needs: cursorNeeds,
+  cursor: {
+    x: 650,
+    y: 100,
+    moving: true,
+    idleSeconds: 0,
+    distanceTo: () => 80,
+  } as CursorTracker,
+});
+const cursorU = reactCursor.utility(ctxCursorNear);
+assert(cursorU > 0.15, `CURSOR scorée si proche+moving (u=${cursorU.toFixed(2)})`);
+assert(
+  (reactCursor.reason?.(ctxCursorNear) ?? "").includes("cursorNearby"),
+  "reason cursor mentionne cursorNearby",
+);
+const cursorGoal = reactCursor.buildGoal(ctxCursorNear);
+assert(cursorGoal.kind === "reactCursor", "cursor buildGoal reactCursor");
+assert(
+  cursorGoal.kind === "reactCursor" && cursorGoal.mode === "chase",
+  "cursor chase déterministe si curious+moving+proche",
+);
+
+const focusUser = makeTestSnapshot({
+  category: "coding",
+  overallActivity: 0.9,
+  userBusy: true,
+  userIdle: false,
+  secondsSinceLastInput: 1,
+});
+const ctxFocus = mockCtx({
+  needs: cursorNeeds,
+  userActivity: focusUser,
+  interpretedContext: interpretRules(focusUser),
+  cursor: {
+    x: 650,
+    y: 100,
+    moving: true,
+    idleSeconds: 0,
+    distanceTo: () => 80,
+  } as CursorTracker,
+});
+assert(
+  reactCursor.utility(ctxFocus) < cursorU * 0.5,
+  "CURSOR fortement réduit en focused_work",
+);
+
+const angryNeeds = new Needs();
+angryNeeds.affection = 20;
+angryNeeds.boredom = 70;
+angryNeeds.energy = 60;
+const ctxAngry = mockCtx({ needs: angryNeeds });
+assert(angry.utility(ctxAngry) > 0.2, "ANGRY si lowAffection+boredom");
+assert((angry.reason?.(ctxAngry) ?? "").includes("frustration"), "reason angry frustration");
+
+const memInt = new Memory();
+memInt.remember("interrupted", 1_000_000);
+const ctxInterrupted = mockCtx({
+  needs: new Needs(),
+  memory: memInt,
+  now: 1_001_000,
+});
+assert(angry.utility(ctxInterrupted) > 0.3, "ANGRY après interrupted");
+
+const excitedNeeds = new Needs();
+excitedNeeds.boredom = 70;
+excitedNeeds.energy = 65;
+excitedNeeds.curiosity = 70;
+excitedNeeds.fatigue = 10;
+assert(excitedNeeds.mood === "playful", "mood playful prérequis excited");
+const ctxExcited = mockCtx({ needs: excitedNeeds });
+assert(excited.utility(ctxExcited) > 0.25, "EXCITED si playful+curious");
+assert((excited.reason?.(ctxExcited) ?? "").includes("playful"), "reason excited playful");
+
+const cryNeeds = new Needs();
+cryNeeds.fatigue = 90;
+cryNeeds.energy = 10;
+cryNeeds.affection = 20;
+const ctxCry = mockCtx({ needs: cryNeeds });
+assert(crying.utility(ctxCry) > 0.4, "CRYING si exhausted+lowAffection");
+
+const kissNeeds = new Needs();
+kissNeeds.affection = 80;
+kissNeeds.social = 60;
+const memKiss = new Memory();
+memKiss.remember("pet", 1_000_000);
+const ctxKiss = mockCtx({ needs: kissNeeds, memory: memKiss, now: 1_001_000 });
+assert(blowKiss.utility(ctxKiss) > 0.2, "BLOW_KISS après pet + affection haute");
+assert(happy.utility(ctxKiss) > 0.15, "HAPPY lingering après pet");
+
+assert(angry.utility(ctxPlay) === 0, "ANGRY inéligible sans cause");
+assert(crying.utility(ctxPlay) === 0, "CRYING inéligible si playful OK");
 
 console.log("\nAll brain smoke checks passed.");

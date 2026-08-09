@@ -7,6 +7,13 @@
 
 import type { StateMachine } from "../state/StateMachine";
 import type { Body } from "../motion/Body";
+import type { Needs } from "../behavior/Needs";
+import type { Memory } from "../behavior/Memory";
+import {
+  resolveInteraction,
+  type InteractionKind,
+} from "../behavior/InteractionResolver";
+import { BrainDebug } from "../behavior/BrainDebug";
 
 export interface PointerInputOptions {
   canvas: HTMLCanvasElement;
@@ -14,9 +21,13 @@ export interface PointerInputOptions {
   machine: StateMachine;
   /** Hauteur visuelle pour placer le personnage sous le curseur pendant le drag. */
   holdOffsetY: number;
+  needs: Needs;
+  memory: Memory;
   onDraggingChange?: (dragging: boolean) => void;
-  /** Marqueur debug : toute commande utilisateur (pet/wave/drag/fall/menu). */
+  /** Marqueur debug : toute commande utilisateur. */
   onUserAction?: () => void;
+  /** Wake soft quand interaction différée (busy). */
+  onDeferredInteraction?: (kind: InteractionKind) => void;
 }
 
 export class PointerInput {
@@ -24,8 +35,11 @@ export class PointerInput {
   readonly #body: Body;
   readonly #machine: StateMachine;
   readonly #holdOffsetY: number;
+  readonly #needs: Needs;
+  readonly #memory: Memory;
   readonly #onDraggingChange?: (dragging: boolean) => void;
   readonly #onUserAction?: () => void;
+  readonly #onDeferredInteraction?: (kind: InteractionKind) => void;
 
   #pointerId: number | null = null;
   #dragging = false;
@@ -39,8 +53,11 @@ export class PointerInput {
     this.#body = options.body;
     this.#machine = options.machine;
     this.#holdOffsetY = options.holdOffsetY;
+    this.#needs = options.needs;
+    this.#memory = options.memory;
     this.#onDraggingChange = options.onDraggingChange;
     this.#onUserAction = options.onUserAction;
+    this.#onDeferredInteraction = options.onDeferredInteraction;
 
     this.#canvas.addEventListener("pointerdown", this.#onDown);
     this.#canvas.addEventListener("pointermove", this.#onMove);
@@ -59,6 +76,43 @@ export class PointerInput {
 
   get dragging(): boolean {
     return this.#dragging;
+  }
+
+  #applyInteraction(kind: InteractionKind): void {
+    this.#onUserAction?.();
+    const now = performance.now();
+    const result = resolveInteraction({
+      kind,
+      needs: this.#needs,
+      memory: this.#memory,
+      stateId: this.#machine.currentId,
+      now,
+    });
+
+    for (const r of result.remember) {
+      this.#memory.remember(r.label, now, r.cooldownMs ?? 0);
+    }
+    if (result.notePositive) this.#memory.notePositive(result.notePositive);
+    if (result.noteFrustration) this.#memory.noteFrustration(result.noteFrustration);
+    if (result.noteActivity) this.#memory.noteActivity(result.noteActivity);
+
+    if (result.suppressReason) {
+      const age = this.#memory.ageSec(kind, now);
+      BrainDebug.suppress(
+        result.immediateState?.toLowerCase() ?? kind,
+        result.suppressReason,
+        age ?? undefined,
+      );
+    }
+
+    if (result.deferred) {
+      this.#onDeferredInteraction?.(kind);
+      return;
+    }
+
+    if (result.immediateState) {
+      this.#machine.request(result.immediateState, true);
+    }
   }
 
   readonly #onDown = (event: PointerEvent): void => {
@@ -99,7 +153,6 @@ export class PointerInput {
     if (this.#dragging) {
       this.#dragging = false;
       this.#onDraggingChange?.(false);
-      // Relâchement en l'air → chute.
       this.#onUserAction?.();
       this.#machine.request("FALL", true);
       return;
@@ -107,23 +160,24 @@ export class PointerInput {
 
     const now = performance.now();
     const held = now - this.#downAt;
-    if (held > 400) return;
+
+    if (held > 400) {
+      this.#applyInteraction("poke");
+      return;
+    }
 
     if (now - this.#lastClickAt < 320) {
       this.#lastClickAt = 0;
-      this.#onUserAction?.();
-      this.#machine.request("WAVE");
+      this.#applyInteraction("wave");
       return;
     }
 
     this.#lastClickAt = now;
-    this.#onUserAction?.();
-    this.#machine.request("PET");
+    this.#applyInteraction("pet");
   };
 
   readonly #onContext = (event: MouseEvent): void => {
     event.preventDefault();
-    // Menu contextuel léger via prompt d'actions rapides.
     const choice = window.prompt(
       "Sophie — commande (sleep, dance, coffee, work, hang, hide)",
       "dance",
@@ -142,6 +196,10 @@ export class PointerInput {
     const key = choice.trim().toLowerCase();
     if (key === "hide") {
       window.close();
+      return;
+    }
+    if (key === "love") {
+      this.#applyInteraction("love");
       return;
     }
     const state = map[key];

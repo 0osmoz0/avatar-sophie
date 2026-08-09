@@ -107,6 +107,8 @@ async function bootstrap(): Promise<void> {
     "LOVE",
     "POKE",
     "BLOW_KISS",
+    "HAPPY",
+    "ANGRY",
   ]);
   const CHAIN_CLIP_STATES = new Set(["OVERWORK", "SURPRISE"]);
 
@@ -146,8 +148,13 @@ async function bootstrap(): Promise<void> {
     body,
     machine,
     holdOffsetY: PET_HEIGHT * 0.35,
+    needs,
+    memory: brain.memory,
     onUserAction: () => {
       pendingInputSource = "user";
+    },
+    onDeferredInteraction: () => {
+      brain.requestWake("deferredInteraction");
     },
     onDraggingChange: (dragging) => {
       dirtyMotion = true;
@@ -175,6 +182,9 @@ async function bootstrap(): Promise<void> {
   await setCursorTracking(true);
   await setClickThrough(true);
 
+  let prevIdle = true;
+  let prevBusy = false;
+
   const loop = new GameLoop({
     maxFps: 30,
     update: (dt) => {
@@ -193,9 +203,33 @@ async function bootstrap(): Promise<void> {
       const activity = userActivity.update(now, cursor);
       const signals = userActivity.drainSignals();
       for (const signal of signals) {
+        if (signal === "idleChanged") {
+          if (prevIdle && !activity.userIdle) {
+            brain.memory.remember("user_returned", now, 45_000);
+            brain.memory.notePositive(0.3);
+            brain.memory.noteActivity(0.2);
+            BrainDebug.log(
+              `user_returned context=${prevIdle ? "idle" : "active"}→active ` +
+                `reaction opportunity=look/happy`,
+            );
+            BrainDebug.memory(brain.memory, now);
+          } else if (!prevIdle && activity.userIdle) {
+            brain.memory.remember("user_became_idle", now, 60_000);
+            brain.memory.noteActivity(0.25);
+            BrainDebug.log("user_became_idle reaction opportunity=look/window/walk");
+            BrainDebug.memory(brain.memory, now);
+          }
+        }
+        if (signal === "busyChanged" && activity.userBusy && !prevBusy) {
+          brain.memory.remember("user_became_busy", now, 40_000);
+          BrainDebug.log("user_became_busy");
+        }
         // Wake soft uniquement — jamais de goal spatial vers l'app active.
         brain.notifyUserActivity(signal);
       }
+      prevIdle = activity.userIdle;
+      prevBusy = activity.userBusy;
+
       const interpreted = contextInterpreter.update(activity, signals);
 
       const decision = brain.update(now, dt, body, cursor, snap, activity, interpreted);
@@ -225,6 +259,12 @@ async function bootstrap(): Promise<void> {
         "WAVE",
         "HAPPY",
         "OVERWORK",
+        "ANGRY",
+        "EXCITED",
+        "CRYING",
+        "BLOW_KISS",
+        "POKE",
+        "LOVE",
       ].includes(machine.currentId);
 
       const intent = stationary ? result.motion : decision.motion;

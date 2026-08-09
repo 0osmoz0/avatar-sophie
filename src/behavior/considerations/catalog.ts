@@ -144,15 +144,22 @@ export const lookAround: Consideration = {
   id: "look",
   priority: 1,
   cooldownMs: 22_000,
-  reason: (ctx) =>
-    withUserReason(`curiosity=${ctx.needs.curiosity.toFixed(0)} glance`, ctx, "look"),
+  reason: (ctx) => {
+    const returned = ctx.memory.recentWithin("user_returned", ctx.now, 45_000);
+    const idle = ctx.memory.recentWithin("user_became_idle", ctx.now, 60_000);
+    const hint = returned ? " user_returned" : idle ? " user_became_idle" : "";
+    return withUserReason(
+      `curiosity=${ctx.needs.curiosity.toFixed(0)} glance${hint}`,
+      ctx,
+      "look",
+    );
+  },
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
-    return ctxScore(
-      ctx,
-      this.id,
-      0.12 + n01(ctx.needs.curiosity) * 0.42 + n01(ctx.needs.boredom) * 0.12,
-    );
+    let base = 0.12 + n01(ctx.needs.curiosity) * 0.42 + n01(ctx.needs.boredom) * 0.12;
+    if (ctx.memory.recentWithin("user_returned", ctx.now, 45_000)) base += 0.08;
+    if (ctx.memory.recentWithin("user_became_idle", ctx.now, 60_000)) base += 0.06;
+    return ctxScore(ctx, this.id, base);
   },
   onComplete: { curiosity: -6, boredom: -4 },
   buildGoal: () => ({ kind: "activity", state: "LOOK_AROUND", label: "look" }),
@@ -463,31 +470,36 @@ export const reactCursor: Consideration = {
   id: "cursor",
   priority: 2,
   cooldownMs: 70_000,
-  reason: (ctx) =>
-    withUserReason(
-      `social=${ctx.needs.social.toFixed(0)} cursorDist≈${Math.round(
-        ctx.cursor.distanceTo(ctx.body.x, ctx.body.y - 80),
-      )}`,
+  reason: (ctx) => {
+    const headY = ctx.body.y - 80;
+    const dist = Math.round(ctx.cursor.distanceTo(ctx.body.x, headY));
+    const moving = ctx.cursor.moving ? "moving" : "still";
+    return withUserReason(
+      `cursorNearby + ${moving} + curiosity=${ctx.needs.curiosity.toFixed(0)} social=${ctx.needs.social.toFixed(0)} dist=${dist}`,
       ctx,
       "cursor",
-    ),
+    );
+  },
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (BUSY_FOR_CURSOR.has(ctx.stateId)) return 0;
     const headY = ctx.body.y - 80;
     const dist = ctx.cursor.distanceTo(ctx.body.x, headY);
     if (dist > 380) return 0;
-    // Moins de rejet aléatoire — toujours rare via score bas + cooldown.
-    if (Math.random() < 0.55) return 0;
     const social = n01(ctx.needs.social);
     const curious = n01(ctx.needs.curiosity);
+    const proximity = Math.max(0, 1 - dist / 380);
+    // Pas de rejet aléatoire — rareté via score + cooldown + contexte focus.
     const base = !ctx.cursor.moving
-      ? 0.06 + social * 0.12
-      : (0.1 + curious * 0.28 + social * 0.14) * (1 - dist / 400);
+      ? 0.08 + social * 0.12
+      : (0.16 + curious * 0.38 + social * 0.24) * proximity * proximity;
     return ctxScore(ctx, this.id, base);
   },
   buildGoal(ctx) {
-    const chase = ctx.needs.curious && ctx.cursor.moving && Math.random() < 0.28;
+    const headY = ctx.body.y - 80;
+    const dist = ctx.cursor.distanceTo(ctx.body.x, headY);
+    // Chase déterministe : curieuse + curseur mobile + vraiment proche.
+    const chase = ctx.needs.curious && ctx.cursor.moving && dist < 220;
     return {
       kind: "reactCursor",
       mode: chase ? "chase" : "notice",
@@ -495,6 +507,148 @@ export const reactCursor: Consideration = {
     };
   },
 };
+
+/** Frustration après interruption d'activité ou affection basse + ennui. */
+export const angry = activity({
+  id: "angry",
+  state: "ANGRY",
+  cooldownMs: 200_000,
+  priority: 2,
+  reason: (ctx) => {
+    const cause = ctx.memory.recentlyDid("interrupted", 5)
+      ? "interrupted"
+      : "lowAffection";
+    return `frustration ${cause} affection=${ctx.needs.affection.toFixed(0)} boredom=${ctx.needs.boredom.toFixed(0)} frMemory=${ctx.memory.recentFrustration.toFixed(2)}`;
+  },
+  score: (ctx) => {
+    const interrupted = ctx.memory.recentlyDid("interrupted", 5);
+    const neglected = ctx.needs.affection < 28 && ctx.needs.boredom >= 55;
+    if (!interrupted && !neglected) return 0;
+    let base = interrupted
+      ? 0.42 + (1 - n01(ctx.needs.affection)) * 0.28 + n01(ctx.needs.boredom) * 0.15
+      : 0.28 + (1 - n01(ctx.needs.affection)) * 0.35 + n01(ctx.needs.boredom) * 0.2;
+    base += ctx.memory.recentFrustration * 0.18;
+    return base;
+  },
+  onComplete: { boredom: -6, affection: -2 },
+});
+
+/** Excitation quand playful + curieuse + assez d'énergie. */
+export const excited = activity({
+  id: "excited",
+  state: "EXCITED",
+  cooldownMs: 220_000,
+  priority: 1,
+  reason: (ctx) => {
+    const poke = ctx.memory.recentWithin("poke", ctx.now, 30_000) ? " recentPoke" : "";
+    return `playful excitement energy=${ctx.needs.energy.toFixed(0)} curiosity=${ctx.needs.curiosity.toFixed(0)} boredom=${ctx.needs.boredom.toFixed(0)}${poke}`;
+  },
+  score: (ctx) => {
+    if (ctx.needs.mood !== "playful") return 0;
+    if (ctx.needs.curiosity < 55) return 0;
+    if (ctx.needs.energy < 50) return 0;
+    if (ctx.needs.exhausted) return 0;
+    let base =
+      0.3 +
+      n01(ctx.needs.energy) * 0.22 +
+      n01(ctx.needs.curiosity) * 0.28 +
+      n01(ctx.needs.boredom) * 0.12;
+    if (ctx.memory.recentWithin("poke", ctx.now, 30_000)) base += 0.1;
+    base += ctx.memory.recentPositiveInteraction * 0.08;
+    return base;
+  },
+  onComplete: { boredom: -10, curiosity: -6, social: 4 },
+});
+
+/** Détresse rare : épuisement + affection basse, ou interruption alors que tired. */
+export const crying = activity({
+  id: "crying",
+  state: "CRYING",
+  cooldownMs: 320_000,
+  priority: 3,
+  reason: (ctx) => {
+    const cause =
+      ctx.needs.exhausted && ctx.needs.affection < 35
+        ? "exhausted"
+        : "interrupted";
+    return `distressed ${cause} affection=${ctx.needs.affection.toFixed(0)} fatigue=${ctx.needs.fatigue.toFixed(0)}`;
+  },
+  score: (ctx) => {
+    const burnout = ctx.needs.exhausted && ctx.needs.affection < 35;
+    const hurt =
+      ctx.needs.tired &&
+      ctx.memory.recentlyDid("interrupted", 4) &&
+      ctx.needs.affection < 40;
+    if (!burnout && !hurt) return 0;
+    return (
+      0.48 +
+      (ctx.needs.exhausted ? 0.35 : 0.18) +
+      (1 - n01(ctx.needs.affection)) * 0.25
+    );
+  },
+  onComplete: { affection: 4, boredom: -4 },
+});
+
+/** Bisou résiduel après interaction affective récente. */
+export const blowKiss = activity({
+  id: "blow_kiss",
+  state: "BLOW_KISS",
+  cooldownMs: 240_000,
+  priority: 1,
+  reason: (ctx) =>
+    `affectionate kiss affection=${ctx.needs.affection.toFixed(0)} social=${ctx.needs.social.toFixed(0)} positiveMemory=${ctx.memory.recentPositiveInteraction.toFixed(2)}`,
+  score: (ctx) => {
+    if (ctx.needs.affection < 75) return 0;
+    if (ctx.needs.social < 55) return 0;
+    const recent =
+      ctx.memory.recentlyDid("pet", 4) ||
+      ctx.memory.recentlyDid("wave", 4) ||
+      ctx.memory.recentlyDid("happy", 4) ||
+      ctx.memory.recentlyDid("love", 4);
+    if (!recent) return 0;
+    if (ctx.memory.recentlyDid("blow_kiss", 2)) return 0;
+    return (
+      0.34 +
+      n01(ctx.needs.affection) * 0.3 +
+      n01(ctx.needs.social) * 0.22 +
+      ctx.memory.recentPositiveInteraction * 0.12
+    );
+  },
+  onComplete: { affection: 3, social: 5, boredom: -4 },
+});
+
+/** Joie résiduelle après pet/wave/kiss. */
+export const happy = activity({
+  id: "happy",
+  state: "HAPPY",
+  cooldownMs: 160_000,
+  priority: 0,
+  reason: (ctx) => {
+    const pet = ctx.memory.recentWithin("pet", ctx.now, 40_000);
+    const returned = ctx.memory.recentWithin("user_returned", ctx.now, 45_000);
+    const tag = pet ? "recentPet" : returned ? "user_returned" : "recentSocial";
+    return `${tag} + affection=${ctx.needs.affection.toFixed(0)} social=${ctx.needs.social.toFixed(0)} positiveMemory=${ctx.memory.recentPositiveInteraction.toFixed(2)}`;
+  },
+  score: (ctx) => {
+    if (ctx.needs.affection < 55) return 0;
+    // Anti-spam : pas de happy→happy immédiat.
+    if (ctx.memory.recentlyDid("happy", 2)) return 0;
+    const recent =
+      ctx.memory.recentWithin("pet", ctx.now, 40_000) ||
+      ctx.memory.recentWithin("wave", ctx.now, 40_000) ||
+      ctx.memory.recentWithin("blow_kiss", ctx.now, 40_000) ||
+      ctx.memory.recentWithin("love", ctx.now, 40_000) ||
+      ctx.memory.recentWithin("user_returned", ctx.now, 45_000);
+    if (!recent) return 0;
+    return (
+      0.26 +
+      n01(ctx.needs.affection) * 0.28 +
+      n01(ctx.needs.social) * 0.12 +
+      ctx.memory.recentPositiveInteraction * 0.2
+    );
+  },
+  onComplete: { boredom: -5, social: 3 },
+});
 
 const BUSY_FOR_CURSOR = new Set<StateId>([
   "SLEEP",
@@ -531,4 +685,9 @@ export const ALL_CONSIDERATIONS: Consideration[] = [
   perchEdge,
   investigateWindow,
   reactCursor,
+  angry,
+  excited,
+  crying,
+  blowKiss,
+  happy,
 ];

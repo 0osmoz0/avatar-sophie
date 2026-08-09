@@ -5,6 +5,9 @@
  * corps peut la remplacer. Un état qui veut marcher n'a pas à savoir s'il faut
  * jouer `walk` ou `run` : il demande le déplacement, le sélecteur regarde la
  * vitesse réelle.
+ *
+ * Note : `run` est un clip de locomotion pure (pas d'état RunState dans la
+ * StateMachine). Il apparaît surtout pendant CURSOR_CHASE / followBody rapide.
  */
 
 import type { AnimationId } from "../assets/generated/animations";
