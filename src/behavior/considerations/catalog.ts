@@ -35,20 +35,34 @@ function chainBoost(ctx: BrainContext, id: string): number {
   if (!prev) return 1;
 
   const table: Record<string, Partial<Record<string, number>>> = {
-    think: { work: 1.22, study: 1.18, environment_inspect: 1.08 },
-    work: { coffee: 1.12, yawn: 1.12, think: 1.12, idle: 1.08, computer_think: 1.1 },
-    look: { perch: 1.16, window: 1.16, edge_peek: 1.1, environment_inspect: 1.08 },
+    think: { work: 1.22, study: 1.18, environment_inspect: 1.08, phone_check: 1.06 },
+    work: {
+      coffee: 1.12,
+      yawn: 1.12,
+      think: 1.12,
+      idle: 1.08,
+      computer_think: 1.1,
+      phone_check: 1.05,
+    },
+    look: { perch: 1.16, window: 1.16, edge_peek: 1.1, environment_inspect: 1.08, idle: 1.06 },
+    walk: {
+      computer_check: 1.1,
+      look: 1.06,
+      idle: 1.05,
+      environment_inspect: 1.06,
+    },
     edge_peek: { edge_step_back: 1.1, idle: 1.08, look: 1.06 },
     edge_stop: { edge_step_back: 1.1, idle: 1.08 },
     edge_step_back: { idle: 1.1, look: 1.06 },
     environment_inspect: { think: 1.1, look: 1.08, idle: 1.06 },
     confused_environment: { think: 1.12, idle: 1.08 },
     environment_surprise: { look: 1.1, idle: 1.08 },
-    phone_check: { phone_text: 1.1, idle: 1.06, look: 1.05 },
-    phone_text: { phone_check: 1.08, idle: 1.06 },
+    phone_check: { phone_text: 1.12, idle: 1.08, look: 1.05, work: 1.04 },
+    phone_text: { phone_check: 1.06, idle: 1.1 },
     phone_call: { idle: 1.08, think: 1.05 },
-    computer_type: { computer_think: 1.1, idle: 1.06 },
-    computer_think: { computer_type: 1.06, look: 1.05 },
+    computer_check: { computer_type: 1.12, computer_think: 1.08, idle: 1.05 },
+    computer_type: { computer_think: 1.12, idle: 1.08, think: 1.06 },
+    computer_think: { computer_type: 1.06, look: 1.05, idle: 1.08 },
     dance: { idle: 1.12, look: 1.1, walk: 1.08 },
     eat: { idle: 1.12, walk: 1.1 },
     yawn: { sleep: 1.15, idle: 1.08, work: 1.06, coffee: 1.1 },
@@ -636,6 +650,7 @@ export const reactCursor: Consideration = {
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (BUSY_FOR_CURSOR.has(ctx.stateId)) return 0;
+    const e = ctx.environment;
     const headY = ctx.body.y - 80;
     const dist = ctx.cursor.distanceTo(ctx.body.x, headY);
     if (dist > 380) return 0;
@@ -643,9 +658,15 @@ export const reactCursor: Consideration = {
     const curious = n01(ctx.needs.curiosity);
     const proximity = Math.max(0, 1 - dist / 380);
     // Pas de rejet aléatoire — rareté via score + cooldown + contexte focus.
-    const base = !ctx.cursor.moving
+    let base = !ctx.cursor.moving
       ? 0.08 + social * 0.12
       : (0.16 + curious * 0.38 + social * 0.24) * proximity * proximity;
+    if (e.cursorApproaching && e.cursorNearby) base *= 1.1;
+    if (e.cursorLeaving) base *= 0.82;
+    // Anti-boucle : curseur proche longtemps / réaction récente
+    if (ctx.memory.recentlyDid("cursor", 2) || ctx.memory.recentlyDid("look", 2)) {
+      base *= 0.7;
+    }
     return ctxScore(ctx, this.id, base);
   },
   buildGoal(ctx) {
@@ -1049,10 +1070,22 @@ export const phoneCheck: Consideration = {
     if (!ready(ctx, this.id)) return 0;
     const e = ctx.environment;
     if (!e.onValidSurface || e.focused) return 0;
-    if (!(e.idle || ctx.idleSeconds > 10 || ctx.needs.boredom >= 45)) return 0;
+    const i = ctx.interpretedContext;
+    const idleAway = i.mode === "idle_away" || e.idle || ctx.idleSeconds > 10;
+    const returned = ctx.memory.recentWithin("user_returned", ctx.now, 45_000);
+    const bored = ctx.needs.boredom >= 45;
+    if (!(idleAway || returned || bored)) return 0;
     if (ctx.memory.recentPositiveInteraction > 0.45) return 0;
-    const base =
-      0.2 + n01(ctx.needs.boredom) * 0.42 + n01(ctx.needs.curiosity) * 0.18;
+    // Anti-spam soft : trace phone_recent + novelty (ctxScore)
+    if (ctx.memory.recentWithin("phone_recent", ctx.now, 55_000) && ctx.needs.boredom < 70) {
+      /* still eligible but base reduced below */
+    }
+    let base =
+      0.18 + n01(ctx.needs.boredom) * 0.44 + n01(ctx.needs.curiosity) * 0.16;
+    if (idleAway && bored) base *= 1.12;
+    if (returned) base *= 1.06;
+    if (ctx.memory.recentWithin("phone_recent", ctx.now, 55_000)) base *= 0.72;
+    if (i.mode === "focused_work" || i.mode === "gaming") base *= 0.35;
     return ctxScore(ctx, this.id, base);
   },
   onComplete: { boredom: -10, social: -4 },
@@ -1074,8 +1107,18 @@ export const phoneText: Consideration = {
     const e = ctx.environment;
     if (!e.onValidSurface || e.focused) return 0;
     if (ctx.needs.boredom < 40 && ctx.needs.social < 45) return 0;
-    if (!(e.idle || ctx.memory.recentlyDid("phone_check", 3))) return 0;
-    return ctxScore(ctx, this.id, 0.18 + n01(ctx.needs.social) * 0.32 + n01(ctx.needs.boredom) * 0.22);
+    if (
+      !(
+        e.idle ||
+        ctx.memory.recentlyDid("phone_check", 3) ||
+        ctx.memory.recentWithin("phone_recent", ctx.now, 90_000)
+      )
+    ) {
+      return 0;
+    }
+    let base = 0.18 + n01(ctx.needs.social) * 0.32 + n01(ctx.needs.boredom) * 0.22;
+    if (ctx.memory.recentlyDid("phone_check", 2)) base *= 1.08; // soft chain already in chainBoost
+    return ctxScore(ctx, this.id, base);
   },
   onComplete: { boredom: -12, social: -6 },
   buildGoal: () => ({
@@ -1117,14 +1160,22 @@ export const computerType: Consideration = {
     if (!ready(ctx, this.id)) return 0;
     const e = ctx.environment;
     if (!e.onValidSurface) return 0;
-    // Justifié par contexte travail / focused — pas random.
-    const workish =
-      e.focused ||
+    const i = ctx.interpretedContext;
+    const focusedWork = e.focused || i.mode === "focused_work";
+    const focusedStudy = i.mode === "focused_work" && ctx.userActivity.category === "productivity";
+    const nearComputer =
+      focusedWork ||
+      focusedStudy ||
       ctx.userActivity.category === "coding" ||
-      ctx.userActivity.category === "productivity";
-    if (!workish) return 0;
+      ctx.userActivity.category === "productivity" ||
+      ctx.memory.recentWithin("computer_recent", ctx.now, 120_000);
+    if (!nearComputer) return 0;
     if (ctx.needs.energy < 25) return 0;
-    return ctxScore(ctx, this.id, 0.2 + n01(ctx.needs.curiosity) * 0.25 + (e.focused ? 0.2 : 0.08));
+    let base = 0.2 + n01(ctx.needs.curiosity) * 0.25 + (focusedWork ? 0.2 : 0.08);
+    if (ctx.memory.recentlyDid("computer_check", 2) || ctx.memory.recentlyDid("walk", 2)) {
+      base *= 1.06;
+    }
+    return ctxScore(ctx, this.id, base);
   },
   onComplete: { boredom: -6, energy: -4 },
   buildGoal: () => ({
@@ -1147,9 +1198,12 @@ export const computerThink: Consideration = {
       ctx.environment.focused ||
       ctx.userActivity.category === "coding" ||
       ctx.memory.recentlyDid("computer_type", 2) ||
-      ctx.memory.recentlyDid("work", 2);
+      ctx.memory.recentlyDid("work", 2) ||
+      ctx.memory.recentWithin("computer_recent", ctx.now, 120_000);
     if (!workish) return 0;
-    return ctxScore(ctx, this.id, 0.1 + n01(ctx.needs.curiosity) * 0.25);
+    let base = 0.1 + n01(ctx.needs.curiosity) * 0.25;
+    if (ctx.needs.fatigue >= 50) base *= 1.08;
+    return ctxScore(ctx, this.id, base);
   },
   buildGoal: () => ({
     kind: "activity",
@@ -1167,8 +1221,16 @@ export const computerCheck: Consideration = {
   utility(ctx) {
     if (!ready(ctx, this.id)) return 0;
     if (!ctx.environment.onValidSurface) return 0;
-    if (!ctx.environment.focused && ctx.userActivity.category !== "coding") return 0;
-    return ctxScore(ctx, this.id, 0.09 + n01(ctx.needs.curiosity) * 0.22);
+    const i = ctx.interpretedContext;
+    const nearComputer =
+      ctx.environment.focused ||
+      i.mode === "focused_work" ||
+      ctx.userActivity.category === "coding" ||
+      ctx.userActivity.category === "productivity";
+    if (!nearComputer) return 0;
+    let base = 0.09 + n01(ctx.needs.curiosity) * 0.22;
+    if (ctx.memory.recentlyDid("walk", 2)) base *= 1.08;
+    return ctxScore(ctx, this.id, base);
   },
   buildGoal: () => ({
     kind: "activity",

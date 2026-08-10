@@ -32,6 +32,7 @@ import { createAllStates, IdleState } from "./state/states";
 import { LocalContextInterpreter } from "./user/LocalContextInterpreter";
 import { UserActivityModel } from "./user/UserActivityModel";
 import { WorldModel } from "./world/WorldModel";
+import { SophieAPI } from "./integration/SophieAPI";
 
 const PET_HEIGHT = 150;
 
@@ -117,10 +118,24 @@ async function bootstrap(): Promise<void> {
     lastAnim: null,
     runtimeReport: null,
     lastSessionExport: null,
+    api: SophieAPI,
   };
   RuntimeAudit.reset();
   RuntimeAudit.setPersistHandler(async (path, contents) => {
     await writeSessionAudit(path, contents);
+  });
+
+  SophieAPI.connect({
+    brain,
+    needs,
+    getStateId: () => machine.currentId,
+    getActivity: () => brain.memory.lastBehavior(),
+    getEnvironment: () => brain.lastEnvironment,
+    getUserPresence: () => {
+      if (userActivity.snapshot.userBusy) return "busy";
+      if (userActivity.snapshot.userIdle) return "idle";
+      return "active";
+    },
   });
 
   /** Dernière source d'entrée non-brain (tray / pointeur) — reset après un tick. */
@@ -275,6 +290,7 @@ async function bootstrap(): Promise<void> {
 
       if (machine.currentId !== lastTrackedState) {
         RuntimeAudit.state(lastTrackedState, machine.currentId);
+        SophieAPI.notifyStateChanged(lastTrackedState, machine.currentId);
         lastTrackedState = machine.currentId;
       }
 

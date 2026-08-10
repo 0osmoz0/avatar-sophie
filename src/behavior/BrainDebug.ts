@@ -58,6 +58,7 @@ declare global {
       runtimeReport?: import("./RuntimeAudit").RuntimeReport | null;
       runtimeAudit?: typeof import("./RuntimeAudit").RuntimeAudit;
       lastSessionExport?: import("./RuntimeAudit").SessionExport | null;
+      api?: typeof import("../integration/SophieAPI").SophieAPI;
     };
   }
 }

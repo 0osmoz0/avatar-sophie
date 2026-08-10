@@ -17,7 +17,10 @@ import type { StateMachine } from "../state/StateMachine";
 import { ALL_CONSIDERATIONS } from "./considerations/catalog";
 import type { BrainContext, Consideration } from "./considerations/types";
 import { EnvironmentTracker } from "../environment/EnvironmentContext";
-import { isPerchAnchorValid } from "../environment/EnvironmentContext";
+import {
+  isPerchAnchorValid,
+  type EnvironmentContext,
+} from "../environment/EnvironmentContext";
 import { WALK_SPEED, RUN_SPEED, type MotionIntent } from "../motion/Locomotion";
 import { EventBus } from "../core/EventBus";
 import { BrainDebug } from "./BrainDebug";
@@ -89,6 +92,7 @@ export class BehaviorBrain {
   /** Label consideration pour logs d'abandon de chaîne. */
   #chainRoot = "";
   readonly #envTracker = new EnvironmentTracker();
+  #lastEnvironment: EnvironmentContext | null = null;
 
   constructor(machine: StateMachine, needs: Needs, considerations = ALL_CONSIDERATIONS) {
     this.#machine = machine;
@@ -169,6 +173,7 @@ export class BehaviorBrain {
       stateId,
       memoryReturned: this.memory.recentWithin("user_returned", now, 45_000),
     });
+    this.#lastEnvironment = environment;
 
     this.#lastCtx = {
       now,
@@ -249,6 +254,11 @@ export class BehaviorBrain {
     this.events.emit("userActivityChanged", { kind });
     // Wake pour re-scorer ; pas d'animation forcée.
     this.requestWake(`userActivity:${kind}`);
+  }
+
+  /** Lecture seule — pour SophieAPI snapshot. */
+  get lastEnvironment(): EnvironmentContext | null {
+    return this.#lastEnvironment;
   }
 
   #canDecide(stateId: StateId): boolean {

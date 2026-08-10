@@ -67,7 +67,7 @@ export class Memory {
     this.#events.push({ label: actionId, at: now });
     this.#prune(now);
     if (cooldownMs > 0) this.#cooldowns.set(actionId, now + cooldownMs);
-    this.#nudgeFromLabel(actionId);
+    this.#nudgeFromLabel(actionId, now);
   }
 
   ready(actionId: string, now: number): boolean {
@@ -322,7 +322,12 @@ export class Memory {
     );
   }
 
-  #nudgeFromLabel(label: string): void {
+  /** Trace soft (utility nudge only) — jamais un script déterministe. */
+  #trace(label: string, now: number): void {
+    this.#events.push({ label, at: now });
+  }
+
+  #nudgeFromLabel(label: string, now: number): void {
     switch (label) {
       case "pet":
       case "love":
@@ -353,6 +358,7 @@ export class Memory {
       case "window":
       case "perch":
         this.nudgePersonality({ curiosityBias: 0.04 });
+        if (label === "window") this.#trace("window_recent", now);
         break;
       case "work":
       case "study":
@@ -362,6 +368,27 @@ export class Memory {
       case "dance":
       case "excited":
         this.nudgePersonality({ playfulness: 0.05 });
+        break;
+      case "phone_check":
+      case "phone_text":
+      case "phone_call":
+        this.nudgePersonality({ sociability: 0.03, independence: 0.02 });
+        this.#trace("phone_recent", now);
+        break;
+      case "computer_type":
+      case "computer_think":
+      case "computer_check":
+        this.nudgePersonality({ independence: 0.03, calmness: 0.02 });
+        this.#trace("computer_recent", now);
+        break;
+      case "edge_peek":
+      case "edge_stop":
+      case "edge_step_back":
+      case "environment_inspect":
+      case "environment_surprise":
+      case "confused_environment":
+        this.nudgePersonality({ curiosityBias: 0.03 });
+        this.#trace("environment_recent", now);
         break;
       default:
         break;

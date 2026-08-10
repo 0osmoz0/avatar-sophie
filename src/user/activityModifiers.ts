@@ -94,6 +94,10 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     if (considerationId === "window") f *= 1.06;
   }
 
+  // --- Mémoire courte (soft only, jamais d'anim forcée) ---
+  const mem = ctx.memory;
+  const now = ctx.now;
+
   // Long focus coding (raw) — soft rest cues, Memory reste prioritaire.
   const longFocus =
     (u.category === "coding" || u.category === "productivity") &&
@@ -103,6 +107,53 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     if (considerationId === "sleep") f *= 1.06;
     if (considerationId === "work") f *= 1.08;
     if (considerationId === "idle") f *= 1.05;
+  }
+
+  // Fatigue contextuelle (Needs déjà dispo) — favorise repos soft.
+  if (ctx.needs.fatigue >= 55 || ctx.needs.tired) {
+    if (
+      considerationId === "idle" ||
+      considerationId === "think" ||
+      considerationId === "yawn" ||
+      considerationId === "coffee" ||
+      considerationId === "sleep"
+    ) {
+      f *= 1.08;
+    }
+    if (considerationId === "walk" || considerationId === "dance") f *= 0.92;
+  }
+
+  // Ennui prolongé — phone / inspect / look / walk (dance seulement si musique réelle).
+  if (ctx.needs.boredom >= 55 || (u.userIdle && ctx.idleSeconds > 20)) {
+    if (
+      considerationId === "phone_check" ||
+      considerationId === "environment_inspect" ||
+      considerationId === "look" ||
+      considerationId === "walk"
+    ) {
+      f *= 1.1;
+    }
+    if (considerationId === "dance" && ctx.environment.musicPlaying === true) {
+      f *= 1.08;
+    }
+  }
+
+  // Traces Memory soft (Phase 11) — jamais de script.
+  if (mem.recentWithin("phone_recent", now, 70_000)) {
+    if (considerationId === "phone_check") f *= 0.78;
+    if (considerationId === "phone_text") f *= 1.06;
+  }
+  if (mem.recentWithin("computer_recent", now, 90_000)) {
+    if (considerationId.startsWith("computer_")) f *= 1.05;
+    if (considerationId === "work" || considerationId === "think") f *= 1.04;
+  }
+  if (mem.recentWithin("window_recent", now, 80_000)) {
+    if (considerationId === "window") f *= 0.85;
+    if (considerationId === "look" || considerationId === "edge_peek") f *= 1.04;
+  }
+  if (mem.recentWithin("environment_recent", now, 70_000)) {
+    if (considerationId === "environment_inspect") f *= 0.82;
+    if (considerationId === "look" || considerationId === "think") f *= 1.04;
   }
 
   // Fallbacks raw si mode unknown.
@@ -116,9 +167,14 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     f *= 1.08;
   }
 
-  // --- Mémoire courte (soft only, jamais d'anim forcée) ---
-  const mem = ctx.memory;
-  const now = ctx.now;
+  if (mem.recentWithin("user_returned", now, 45_000)) {
+    if (considerationId === "look") f *= 1.15;
+    if (considerationId === "happy") f *= 1.18;
+    // sociability soft — jamais d'anim forcée
+    if (mem.sociability > 0.55 && (considerationId === "look" || considerationId === "happy")) {
+      f *= 1.04;
+    }
+  }
   if (mem.recentWithin("user_became_idle", now, 60_000)) {
     if (
       considerationId === "look" ||
@@ -130,10 +186,28 @@ export function userActivityFactor(considerationId: string, ctx: BrainContext): 
     ) {
       f *= 1.1;
     }
+    // independence → work / think / study soft
+    if (
+      mem.independence > 0.55 &&
+      (considerationId === "work" ||
+        considerationId === "think" ||
+        considerationId === "study" ||
+        considerationId.startsWith("computer_"))
+    ) {
+      f *= 1 + (mem.independence - 0.5) * 0.12;
+    }
   }
-  if (mem.recentWithin("user_returned", now, 45_000)) {
-    if (considerationId === "look") f *= 1.15;
-    if (considerationId === "happy") f *= 1.18;
+  if (mem.recentWithin("user_became_busy", now, 60_000) || i.mode === "focused_work") {
+    if (
+      mem.independence > 0.55 &&
+      (considerationId === "work" ||
+        considerationId === "think" ||
+        considerationId === "study" ||
+        considerationId.startsWith("computer_"))
+    ) {
+      f *= 1 + (mem.independence - 0.5) * 0.1;
+    }
+    if (considerationId.startsWith("phone_")) f *= 0.55;
   }
   if (mem.recentPositiveInteraction > 0.25) {
     const boost = 1 + mem.recentPositiveInteraction * 0.12;
