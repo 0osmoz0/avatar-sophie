@@ -89,7 +89,7 @@ async function bootstrap(): Promise<void> {
   const contextInterpreter = new LocalContextInterpreter();
 
   // Debug : localStorage.sophieDebugBrain / sophieDebugRuntime / sophieUseOllama = "1"
-  // Observation session : localStorage.sophieObserveSession = "1" force les flags debug.
+  // Observation session : localStorage.sophieObserveSession = "1" active le runtime audit (sans overlay).
   // Compteurs anim : Sophie.animationCounts / Sophie.lastAnim
   // Session : Sophie.runtimeAudit.exportSession() / flushSession()
   //           → tools/.audit-cache/runtime-session.json (auto)
@@ -99,15 +99,18 @@ async function bootstrap(): Promise<void> {
       localStorage.setItem("sophieObserveSession", "1");
     }
     if (localStorage.getItem("sophieObserveSession") === "1") {
+      // Runtime audit only — pas d'overlay Brain à l'écran.
       localStorage.setItem("sophieDebugRuntime", "1");
-      localStorage.setItem("sophieDebugBrain", "1");
+      if (localStorage.getItem("sophieDebugBrain") == null) {
+        localStorage.setItem("sophieDebugBrain", "0");
+      }
     }
   } catch {
     /* ignore */
   }
   window.Sophie = {
     ...window.Sophie,
-    debugBrain: window.Sophie?.debugBrain ?? localStorage.getItem("sophieDebugBrain") === "1",
+    debugBrain: localStorage.getItem("sophieDebugBrain") === "1",
     debugRuntime:
       window.Sophie?.debugRuntime ?? localStorage.getItem("sophieDebugRuntime") === "1",
     useOllama: window.Sophie?.useOllama ?? localStorage.getItem("sophieUseOllama") === "1",

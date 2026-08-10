@@ -82,27 +82,12 @@ let lastContextLine = "";
 const animationCounts: Record<string, number> = {};
 let lastAnimKey = "";
 
-function ensureOverlay(): HTMLDivElement | null {
-  if (typeof document === "undefined") return null;
-  if (overlayEl) return overlayEl;
-  const el = document.createElement("div");
-  el.id = "sophie-brain-debug";
-  el.style.cssText = [
-    "position:fixed",
-    "left:8px",
-    "bottom:8px",
-    "z-index:99999",
-    "pointer-events:none",
-    "font:11px/1.35 ui-monospace,Menlo,monospace",
-    "color:#e8f0e4",
-    "background:rgba(12,18,14,0.72)",
-    "padding:8px 10px",
-    "border-radius:6px",
-    "max-width:360px",
-    "white-space:pre-wrap",
-  ].join(";");
-  document.body.appendChild(el);
-  return (overlayEl = el);
+function removeOverlay(): void {
+  if (overlayEl?.parentNode) overlayEl.parentNode.removeChild(overlayEl);
+  overlayEl = null;
+  if (typeof document !== "undefined") {
+    document.getElementById("sophie-brain-debug")?.remove();
+  }
 }
 
 function formatDuration(sec: number): string {
@@ -187,33 +172,14 @@ export const BrainDebug = {
     if (mem && now != null) {
       BrainDebug.memory(mem, now);
     }
-    const el = ensureOverlay();
-    if (el) {
-      const memLine =
-        mem && now != null
-          ? `pos=${mem.recentPositiveInteraction.toFixed(2)} fr=${mem.recentFrustration.toFixed(2)}`
-          : "";
-      const persLine = log.personalitySnapshot
-        ? `p=${log.personalitySnapshot.playful.toFixed(2)} s=${log.personalitySnapshot.social.toFixed(2)} ` +
-          `c=${log.personalitySnapshot.curiosity.toFixed(2)} i=${log.personalitySnapshot.independence.toFixed(2)}`
-        : "";
-      el.textContent =
-        `${lastContextLine || lastUserLine}\n` +
-        `pick ${log.pick} (${log.utility.toFixed(2)})${prevBit}${novBit}${chainBit}${persBit}\n` +
-        `${log.reason}\n` +
-        `e${n.e} f${n.f} b${n.b} c${n.c} s${n.s} ${n.mood}` +
-        (memLine ? `\n${memLine}` : "") +
-        (persLine ? `\n${persLine}` : "");
-    }
+    // Pas d'overlay à l'écran — logs console uniquement.
+    removeOverlay();
   },
 
   status(line: string): void {
     if (!flagEnabled()) return;
-    const el = ensureOverlay();
-    if (el) {
-      const head = lastContextLine || lastUserLine.replace("[UserActivity] ", "");
-      el.textContent = head ? `${head}\n${line}` : line;
-    }
+    console.log(`[Brain:status] ${line}`);
+    removeOverlay();
   },
 
   suppress(
